@@ -119,41 +119,43 @@ function fmt(value) {
   return Number(value.toFixed(2));
 }
 
-function verticalEdgePath(x, y0, y1, dir, tabSpan, neckSpan) {
+function verticalEdgePath(x, y0, y1, dir, tabSpan, tabDepth, neckSpan) {
   const ym = (y0 + y1) / 2;
   const yStart = ym - tabSpan / 2;
-  const yNeckStart = yStart + neckSpan;
-  const arcSpan = tabSpan - neckSpan * 2;
-  const radius = arcSpan / 2;
-  const yNeckEnd = yNeckStart + arcSpan;
+  const yBulbStart = yStart + neckSpan;
+  const bulbSpan = tabSpan - neckSpan * 2;
+  const yBulbEnd = yBulbStart + bulbSpan;
   const yEnd = yStart + tabSpan;
-  const sweep = dir === 1 ? 1 : 0;
+  const xTab = x + dir * tabDepth;
+  const control = bulbSpan * 0.25;
 
   return [
     `M ${fmt(x)} ${fmt(y0)}`,
     `L ${fmt(x)} ${fmt(yStart)}`,
-    `L ${fmt(x)} ${fmt(yNeckStart)}`,
-    `A ${fmt(radius)} ${fmt(radius)} 0 0 ${sweep} ${fmt(x)} ${fmt(yNeckEnd)}`,
+    `L ${fmt(x)} ${fmt(yBulbStart)}`,
+    `C ${fmt(x)} ${fmt(yBulbStart + control)} ${fmt(xTab)} ${fmt(ym - control)} ${fmt(xTab)} ${fmt(ym)}`,
+    `C ${fmt(xTab)} ${fmt(ym + control)} ${fmt(x)} ${fmt(yBulbEnd - control)} ${fmt(x)} ${fmt(yBulbEnd)}`,
     `L ${fmt(x)} ${fmt(yEnd)}`,
     `L ${fmt(x)} ${fmt(y1)}`
   ].join(" ");
 }
 
-function horizontalEdgePath(y, x0, x1, dir, tabSpan, neckSpan) {
+function horizontalEdgePath(y, x0, x1, dir, tabSpan, tabDepth, neckSpan) {
   const xm = (x0 + x1) / 2;
   const xStart = xm - tabSpan / 2;
-  const xNeckStart = xStart + neckSpan;
-  const arcSpan = tabSpan - neckSpan * 2;
-  const radius = arcSpan / 2;
-  const xNeckEnd = xNeckStart + arcSpan;
+  const xBulbStart = xStart + neckSpan;
+  const bulbSpan = tabSpan - neckSpan * 2;
+  const xBulbEnd = xBulbStart + bulbSpan;
   const xEnd = xStart + tabSpan;
-  const sweep = dir === 1 ? 1 : 0;
+  const yTab = y + dir * tabDepth;
+  const control = bulbSpan * 0.25;
 
   return [
     `M ${fmt(x0)} ${fmt(y)}`,
     `L ${fmt(xStart)} ${fmt(y)}`,
-    `L ${fmt(xNeckStart)} ${fmt(y)}`,
-    `A ${fmt(radius)} ${fmt(radius)} 0 0 ${sweep} ${fmt(xNeckEnd)} ${fmt(y)}`,
+    `L ${fmt(xBulbStart)} ${fmt(y)}`,
+    `C ${fmt(xBulbStart + control)} ${fmt(y)} ${fmt(xm - control)} ${fmt(yTab)} ${fmt(xm)} ${fmt(yTab)}`,
+    `C ${fmt(xm + control)} ${fmt(yTab)} ${fmt(xBulbEnd - control)} ${fmt(y)} ${fmt(xBulbEnd)} ${fmt(y)}`,
     `L ${fmt(xEnd)} ${fmt(y)}`,
     `L ${fmt(x1)} ${fmt(y)}`
   ].join(" ");
@@ -164,8 +166,9 @@ function buildPuzzlePaths(width, height, rows, cols) {
   const cellWidth = width / cols;
   const cellHeight = height / rows;
   const baseSize = Math.min(cellWidth, cellHeight);
-  const tabSpan = baseSize * 0.34;
-  const neckSpan = tabSpan * 0.22;
+  const tabSpan = baseSize * 0.58;
+  const tabDepth = baseSize * 0.32;
+  const neckSpan = tabSpan * 0.18;
 
   paths.push(`M 0 0 H ${fmt(width)} V ${fmt(height)} H 0 Z`);
 
@@ -175,7 +178,7 @@ function buildPuzzlePaths(width, height, rows, cols) {
       const y0 = cellHeight * r;
       const y1 = cellHeight * (r + 1);
       const dir = (r + c) % 2 === 0 ? 1 : -1;
-      paths.push(verticalEdgePath(x, y0, y1, dir, tabSpan, neckSpan));
+      paths.push(verticalEdgePath(x, y0, y1, dir, tabSpan, tabDepth, neckSpan));
     }
   }
 
@@ -185,7 +188,7 @@ function buildPuzzlePaths(width, height, rows, cols) {
       const x0 = cellWidth * c;
       const x1 = cellWidth * (c + 1);
       const dir = (r + c) % 2 === 0 ? -1 : 1;
-      paths.push(horizontalEdgePath(y, x0, x1, dir, tabSpan, neckSpan));
+      paths.push(horizontalEdgePath(y, x0, x1, dir, tabSpan, tabDepth, neckSpan));
     }
   }
 

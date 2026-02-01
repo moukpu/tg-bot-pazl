@@ -4,6 +4,7 @@ import https from "https";
 import path from "path";
 import sharp from "sharp";
 import { line, curveBasis } from "d3-shape";
+import TextToSVG from "text-to-svg";
 import { fileURLToPath } from "url";
 import { Telegraf, Markup } from "telegraf";
 
@@ -21,11 +22,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const FONT_PATH = path.resolve(__dirname, "..", "assets", "NotoSans-Regular.ttf");
 let FONT_DATA = "";
+let textToSvg = null;
 
 try {
   FONT_DATA = fs.readFileSync(FONT_PATH).toString("base64");
 } catch (err) {
   console.warn("Font file not found, fallback fonts will be used.", err?.message || err);
+}
+
+try {
+  textToSvg = TextToSVG.loadSync(FONT_PATH);
+} catch (err) {
+  console.warn("TextToSVG font load failed, falling back to SVG text.", err?.message || err);
+  try {
+    textToSvg = TextToSVG.loadSync();
+  } catch (fallbackErr) {
+    console.warn("TextToSVG default font load failed.", fallbackErr?.message || fallbackErr);
+    textToSvg = null;
+  }
 }
 
 const FONT_FAMILY = FONT_DATA ? "PuzzleFont, Arial, sans-serif" : "Arial, sans-serif";
@@ -289,6 +303,54 @@ function wrapText(text, maxChars, maxLines) {
   return { lines, truncated: false };
 }
 
+function measureTextWidth(text, fontSize) {
+  if (!textToSvg) return text.length * fontSize * 0.6;
+  const metrics = textToSvg.getMetrics(text, { fontSize, anchor: "left baseline" });
+  return metrics.width || 0;
+}
+
+function wrapTextByWidth(text, maxWidth, fontSize) {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return { lines: [""], truncated: false };
+
+  const words = cleaned.split(" ");
+  const lines = [];
+  let current = "";
+
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (measureTextWidth(next, fontSize) <= maxWidth) {
+      current = next;
+      continue;
+    }
+
+    if (current) {
+      lines.push(current);
+      current = "";
+    }
+
+    if (measureTextWidth(word, fontSize) <= maxWidth) {
+      current = word;
+      continue;
+    }
+
+    let segment = "";
+    for (const char of word) {
+      const test = segment + char;
+      if (measureTextWidth(test, fontSize) > maxWidth && segment) {
+        lines.push(segment);
+        segment = char;
+      } else {
+        segment = test;
+      }
+    }
+    current = segment;
+  }
+
+  if (current) lines.push(current);
+  return { lines, truncated: false };
+}
+
 function fitTextToCell(text, cellWidth, cellHeight) {
   const minSide = Math.min(cellWidth, cellHeight);
   const padding = Math.max(8, Math.floor(minSide * 0.08));
@@ -299,21 +361,24 @@ function fitTextToCell(text, cellWidth, cellHeight) {
   let last = null;
 
   while (fontSize >= minFont && attempt < 40) {
-    const lineHeight = fontSize * 1.2;
+    const lineHeight = fontSize * 1.25;
     const maxLines = Math.max(1, Math.floor((cellHeight - padding * 2) / lineHeight));
-    const maxChars = Math.max(4, Math.floor((cellWidth - padding * 2) / (fontSize * 0.6)));
-    const wrapped = wrapText(text, maxChars, maxLines);
+    const maxWidth = Math.max(10, cellWidth - padding * 2);
+    const wrapped = wrapTextByWidth(text, maxWidth, fontSize);
+    let lines = wrapped.lines;
+    const truncated = lines.length > maxLines;
+    if (truncated) {
+      lines = lines.slice(0, maxLines);
+    }
     last = {
-      lines: wrapped.lines,
-      truncated: wrapped.truncated,
+      lines,
+      truncated,
       fontSize,
       lineHeight,
       maxLines,
-      maxChars
+      maxChars: 0
     };
-    if (!wrapped.truncated) {
-      return last;
-    }
+    if (!truncated) return last;
     fontSize -= 1;
     attempt += 1;
   }
@@ -363,22 +428,31 @@ function buildBackSvg(width, height, rows, cols, facts, puzzlePaths) {
       const totalHeight = (wrappedLines.length - 1) * lineHeight;
       const startY = centerY - totalHeight / 2;
 
-      const tspans = wrappedLines
-        .map((line, idx) => {
-          const y = startY + idx * lineHeight;
-          return `<tspan x="${centerX.toFixed(2)}" y="${y.toFixed(2)}">${escapeXml(line)}</tspan>`;
-        })
-        .join("");
+      const paths = wrappedLines.map((line, idx) => {
+        const y = startY + idx * lineHeight;
+        if (textToSvg) {
+          return textToSvg.getPath(line, {
+            x: centerX,
+            y,
+            fontSize,
+            anchor: "center middle",
+            attributes: { fill: "#111" }
+          });
+        }
+        return `<text font-size="${fontSize}" text-anchor="middle" fill="#111" font-family="${FONT_FAMILY}" x="${centerX.toFixed(
+          2
+        )}" y="${y.toFixed(2)}">${escapeXml(line)}</text>`;
+      });
 
-      textBlocks.push(
-        `<text font-size="${fontSize}" text-anchor="middle" fill="#111" font-family="${FONT_FAMILY}">${tspans}</text>`
-      );
+      textBlocks.push(paths.join("\n"));
     }
   }
 
+  const fontStyle = textToSvg ? "" : `<style>${FONT_STYLE}</style>`;
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-  <style>${FONT_STYLE}</style>
+  ${fontStyle}
   <rect width="100%" height="100%" fill="#ffffff" />
   <g fill="none" stroke="${LINE_COLOR}" stroke-opacity="${LINE_OPACITY}" stroke-width="${LINE_WIDTH}" stroke-linecap="round" stroke-linejoin="round">
     ${lines}

@@ -119,47 +119,51 @@ function fmt(value) {
   return Number(value.toFixed(2));
 }
 
-function verticalEdgePath(x, y0, y1, dir, tabSpan, tabDepth, neckSpan) {
+function verticalEdgePath(x, y0, y1, dir, tabSpan, knobRadius, neckWidth, centerOffset) {
   const ym = (y0 + y1) / 2;
   const yStart = ym - tabSpan / 2;
   const yEnd = ym + tabSpan / 2;
-  const bulbRadius = Math.max(2, tabSpan / 2 - neckSpan);
-  const centerOffset = Math.max(1, tabDepth - bulbRadius);
-  const cx = x + dir * centerOffset;
-  const yBulbStart = ym - bulbRadius;
-  const yBulbEnd = ym + bulbRadius;
+  const neckHalf = neckWidth / 2;
+  const yNeckStart = ym - neckHalf;
+  const yNeckEnd = ym + neckHalf;
+  const safeRadius = Math.max(2, knobRadius);
+  const d = Math.sqrt(Math.max(1, safeRadius * safeRadius - neckHalf * neckHalf));
+  const safeOffset = Math.max(safeRadius + 1, centerOffset);
+  const xNeck = x + dir * Math.max(1, safeOffset - d);
   const sweep = dir === 1 ? 1 : 0;
 
   return [
     `M ${fmt(x)} ${fmt(y0)}`,
     `L ${fmt(x)} ${fmt(yStart)}`,
-    `L ${fmt(x)} ${fmt(yBulbStart)}`,
-    `L ${fmt(cx)} ${fmt(yBulbStart)}`,
-    `A ${fmt(bulbRadius)} ${fmt(bulbRadius)} 0 1 ${sweep} ${fmt(cx)} ${fmt(yBulbEnd)}`,
-    `L ${fmt(x)} ${fmt(yBulbEnd)}`,
+    `L ${fmt(x)} ${fmt(yNeckStart)}`,
+    `L ${fmt(xNeck)} ${fmt(yNeckStart)}`,
+    `A ${fmt(safeRadius)} ${fmt(safeRadius)} 0 1 ${sweep} ${fmt(xNeck)} ${fmt(yNeckEnd)}`,
+    `L ${fmt(x)} ${fmt(yNeckEnd)}`,
     `L ${fmt(x)} ${fmt(yEnd)}`,
     `L ${fmt(x)} ${fmt(y1)}`
   ].join(" ");
 }
 
-function horizontalEdgePath(y, x0, x1, dir, tabSpan, tabDepth, neckSpan) {
+function horizontalEdgePath(y, x0, x1, dir, tabSpan, knobRadius, neckWidth, centerOffset) {
   const xm = (x0 + x1) / 2;
   const xStart = xm - tabSpan / 2;
   const xEnd = xm + tabSpan / 2;
-  const bulbRadius = Math.max(2, tabSpan / 2 - neckSpan);
-  const centerOffset = Math.max(1, tabDepth - bulbRadius);
-  const cy = y + dir * centerOffset;
-  const xBulbStart = xm - bulbRadius;
-  const xBulbEnd = xm + bulbRadius;
+  const neckHalf = neckWidth / 2;
+  const xNeckStart = xm - neckHalf;
+  const xNeckEnd = xm + neckHalf;
+  const safeRadius = Math.max(2, knobRadius);
+  const d = Math.sqrt(Math.max(1, safeRadius * safeRadius - neckHalf * neckHalf));
+  const safeOffset = Math.max(safeRadius + 1, centerOffset);
+  const yNeck = y + dir * Math.max(1, safeOffset - d);
   const sweep = dir === 1 ? 1 : 0;
 
   return [
     `M ${fmt(x0)} ${fmt(y)}`,
     `L ${fmt(xStart)} ${fmt(y)}`,
-    `L ${fmt(xBulbStart)} ${fmt(y)}`,
-    `L ${fmt(xBulbStart)} ${fmt(cy)}`,
-    `A ${fmt(bulbRadius)} ${fmt(bulbRadius)} 0 1 ${sweep} ${fmt(xBulbEnd)} ${fmt(cy)}`,
-    `L ${fmt(xBulbEnd)} ${fmt(y)}`,
+    `L ${fmt(xNeckStart)} ${fmt(y)}`,
+    `L ${fmt(xNeckStart)} ${fmt(yNeck)}`,
+    `A ${fmt(safeRadius)} ${fmt(safeRadius)} 0 1 ${sweep} ${fmt(xNeckEnd)} ${fmt(yNeck)}`,
+    `L ${fmt(xNeckEnd)} ${fmt(y)}`,
     `L ${fmt(xEnd)} ${fmt(y)}`,
     `L ${fmt(x1)} ${fmt(y)}`
   ].join(" ");
@@ -170,9 +174,10 @@ function buildPuzzlePaths(width, height, rows, cols) {
   const cellWidth = width / cols;
   const cellHeight = height / rows;
   const baseSize = Math.min(cellWidth, cellHeight);
-  const tabSpan = baseSize * 0.8;
-  const tabDepth = baseSize * 0.38;
-  const neckSpan = tabSpan * 0.12;
+  const tabSpan = baseSize * 0.85;
+  const knobRadius = baseSize * 0.33;
+  const neckWidth = knobRadius * 0.6;
+  const centerOffset = knobRadius + baseSize * 0.12;
 
   paths.push(`M 0 0 H ${fmt(width)} V ${fmt(height)} H 0 Z`);
 
@@ -182,7 +187,7 @@ function buildPuzzlePaths(width, height, rows, cols) {
       const y0 = cellHeight * r;
       const y1 = cellHeight * (r + 1);
       const dir = (r + c) % 2 === 0 ? 1 : -1;
-      paths.push(verticalEdgePath(x, y0, y1, dir, tabSpan, tabDepth, neckSpan));
+      paths.push(verticalEdgePath(x, y0, y1, dir, tabSpan, knobRadius, neckWidth, centerOffset));
     }
   }
 
@@ -192,7 +197,7 @@ function buildPuzzlePaths(width, height, rows, cols) {
       const x0 = cellWidth * c;
       const x1 = cellWidth * (c + 1);
       const dir = (r + c) % 2 === 0 ? -1 : 1;
-      paths.push(horizontalEdgePath(y, x0, x1, dir, tabSpan, tabDepth, neckSpan));
+      paths.push(horizontalEdgePath(y, x0, x1, dir, tabSpan, knobRadius, neckWidth, centerOffset));
     }
   }
 

@@ -72,7 +72,8 @@ function createSession() {
     height: null,
     facts: [],
     seed: null,
-    puzzlePaths: null
+    puzzlePaths: null,
+    edgeMeta: null
   };
 }
 
@@ -180,12 +181,24 @@ function edgeDistributions(rng) {
   const p6 = [100, 0];
 
   const sign = rng() < 0.5 ? -1 : 1;
-  return [p1, p2, p3, p4, p5, p6].map((point) => [point[0] / 100, (point[1] * sign) / 100]);
+  const normalized = [p1, p2, p3, p4, p5, p6].map((point) => [point[0] / 100, point[1] / 100]);
+  const amp = normalized.reduce((max, point) => Math.max(max, Math.abs(point[1])), 0);
+  const points = normalized.map((point) => [point[0], point[1] * sign]);
+  return { points, amp, sign };
 }
 
 function buildDistributions(rowCount, columnCount, rng) {
   const lineGroups = [];
-  lineGroups.push(new Array(columnCount).fill([[0, 0], [1, 0]]));
+  lineGroups.push(
+    Array.from({ length: columnCount }, () => ({
+      points: [
+        [0, 0],
+        [1, 0]
+      ],
+      amp: 0,
+      sign: 0
+    }))
+  );
 
   for (let i = 1; i < rowCount; i += 1) {
     const lines = [];
@@ -195,7 +208,16 @@ function buildDistributions(rowCount, columnCount, rng) {
     lineGroups.push(lines);
   }
 
-  lineGroups.push(new Array(columnCount).fill([[0, 0], [1, 0]]));
+  lineGroups.push(
+    Array.from({ length: columnCount }, () => ({
+      points: [
+        [0, 0],
+        [1, 0]
+      ],
+      amp: 0,
+      sign: 0
+    }))
+  );
   return lineGroups;
 }
 
@@ -208,7 +230,7 @@ function offsetPoint(point, offsetX, offsetY, columnWidth, rowHeight) {
 }
 
 function offsetPoints(lineGroups, offsetFn) {
-  return lineGroups.map((lines, i) => lines.map((line, j) => line.map((point) => offsetFn(point, i, j))));
+  return lineGroups.map((lines, i) => lines.map((line, j) => line.points.map((point) => offsetFn(point, i, j))));
 }
 
 function lineToPath(points) {
@@ -220,7 +242,7 @@ function lineToPath(points) {
   return path || "";
 }
 
-function buildPuzzlePaths(width, height, rows, cols, seed) {
+function buildPuzzleData(width, height, rows, cols, seed) {
   const rng = createRng(Number.isFinite(seed) ? seed : Math.floor(Math.random() * 1e9));
   const rowHeight = height / rows;
   const columnWidth = width / cols;
@@ -228,13 +250,33 @@ function buildPuzzlePaths(width, height, rows, cols, seed) {
   const rowsLines = buildDistributions(rows, cols, rng);
   const columnsLines = buildDistributions(cols, rows, rng);
 
+  const safetyFactor = 1.15;
+  const horizontalEdges = rowsLines.map((lines) =>
+    lines.map((line) => ({
+      ampPx: line.amp * rowHeight * safetyFactor,
+      sign: line.sign
+    }))
+  );
+  const verticalEdges = columnsLines.map((lines) =>
+    lines.map((line) => ({
+      ampPx: line.amp * columnWidth * safetyFactor,
+      sign: line.sign
+    }))
+  );
+
   const rowsOffset = offsetPoints(rowsLines, (point, i, j) => offsetPoint(point, j, i, columnWidth, rowHeight));
   const columnsOffset = offsetPoints(columnsLines, (point, i, j) =>
     offsetPoint(transposePoint(point), i, j, columnWidth, rowHeight)
   );
 
   const allLines = [...rowsOffset.flat(), ...columnsOffset.flat()];
-  return allLines.map(lineToPath).filter(Boolean);
+  return {
+    paths: allLines.map(lineToPath).filter(Boolean),
+    edgeMeta: {
+      horizontal: horizontalEdges,
+      vertical: verticalEdges
+    }
+  };
 }
 
 function buildPuzzleSvg(width, height, puzzlePaths) {
@@ -394,6 +436,87 @@ function fitTextToCell(text, cellWidth, cellHeight, paddingOverride) {
   };
 }
 
+function sanitizeFact(raw) {
+  let text = String(raw || "");
+  try {
+    text = text.replace(/\p{Extended_Pictographic}/gu, "");
+  } catch (err) {
+    text = text.replace(/[\u{1F300}-\u{1FAFF}]/gu, "");
+  }
+  try {
+    text = text.replace(/[^\p{L}\p{N}\s.,;:!?'"()\-]/gu, "");
+  } catch (err) {
+    text = text.replace(/[^\w\s.,;:!?'"()\-]/g, "");
+  }
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function getSafeBox(row, col, cellWidth, cellHeight, rows, cols, edgeMeta, basePadding) {
+  const leftBase = col * cellWidth;
+  const topBase = row * cellHeight;
+  const safePadding = Number.isFinite(basePadding)
+    ? basePadding
+    : Math.max(10, Math.floor(Math.min(cellWidth, cellHeight) * 0.14));
+
+  let topInset = safePadding;
+  let bottomInset = safePadding;
+  let leftInset = safePadding;
+  let rightInset = safePadding;
+
+  if (edgeMeta?.horizontal) {
+    if (row > 0) {
+      const edge = edgeMeta.horizontal[row]?.[col];
+      if (edge && edge.sign > 0) topInset += edge.ampPx;
+    }
+    if (row < rows - 1) {
+      const edge = edgeMeta.horizontal[row + 1]?.[col];
+      if (edge && edge.sign < 0) bottomInset += edge.ampPx;
+    }
+  }
+
+  if (edgeMeta?.vertical) {
+    if (col > 0) {
+      const edge = edgeMeta.vertical[col]?.[row];
+      if (edge && edge.sign > 0) leftInset += edge.ampPx;
+    }
+    if (col < cols - 1) {
+      const edge = edgeMeta.vertical[col + 1]?.[row];
+      if (edge && edge.sign < 0) rightInset += edge.ampPx;
+    }
+  }
+
+  let left = leftBase + leftInset;
+  let right = leftBase + cellWidth - rightInset;
+  let top = topBase + topInset;
+  let bottom = topBase + cellHeight - bottomInset;
+
+  if (right - left < 10) {
+    left = leftBase + cellWidth * 0.1;
+    right = leftBase + cellWidth * 0.9;
+  }
+  if (bottom - top < 10) {
+    top = topBase + cellHeight * 0.1;
+    bottom = topBase + cellHeight * 0.9;
+  }
+
+  const width = right - left;
+  const height = bottom - top;
+  return {
+    left,
+    right,
+    top,
+    bottom,
+    width,
+    height,
+    centerX: left + width / 2,
+    centerY: top + height / 2
+  };
+}
+
+function getTextPadding(box) {
+  return Math.max(4, Math.floor(Math.min(box.width, box.height) * 0.08));
+}
+
 function mirrorFacts(facts, rows, cols) {
   const mirrored = new Array(facts.length);
   for (let r = 0; r < rows; r += 1) {
@@ -406,13 +529,13 @@ function mirrorFacts(facts, rows, cols) {
   return mirrored;
 }
 
-function buildBackSvg(width, height, rows, cols, facts, puzzlePaths) {
-  const lines = (puzzlePaths || buildPuzzlePaths(width, height, rows, cols))
+function buildBackSvg(width, height, rows, cols, facts, puzzlePaths, edgeMeta) {
+  const lines = (puzzlePaths || buildPuzzleData(width, height, rows, cols).paths)
     .map((pathDef) => `<path d="${pathDef}" />`)
     .join("");
   const cellWidth = width / cols;
   const cellHeight = height / rows;
-  const safePadding = Math.max(12, Math.floor(Math.min(cellWidth, cellHeight) * 0.22));
+  const basePadding = Math.max(10, Math.floor(Math.min(cellWidth, cellHeight) * 0.14));
   const mirrored = mirrorFacts(facts, rows, cols);
 
   const textBlocks = [];
@@ -422,9 +545,17 @@ function buildBackSvg(width, height, rows, cols, facts, puzzlePaths) {
       const text = mirrored[index] || "";
       if (!text) continue;
 
-      const centerX = cellWidth * c + cellWidth / 2;
-      const centerY = cellHeight * r + cellHeight / 2;
-      const { lines: wrappedLines, fontSize, lineHeight } = fitTextToCell(text, cellWidth, cellHeight, safePadding);
+      const safeBox = getSafeBox(r, c, cellWidth, cellHeight, rows, cols, edgeMeta, basePadding);
+      const textPadding = getTextPadding(safeBox);
+      const { lines: wrappedLines, fontSize, lineHeight } = fitTextToCell(
+        text,
+        safeBox.width,
+        safeBox.height,
+        textPadding
+      );
+
+      const centerX = safeBox.centerX;
+      const centerY = safeBox.centerY;
 
       const totalHeight = (wrappedLines.length - 1) * lineHeight;
       const startY = centerY - totalHeight / 2;
@@ -466,9 +597,10 @@ async function generateFrontImage(ctx, session) {
   const fileLink = await ctx.telegram.getFileLink(session.photoFileId);
   const photoBuffer = await downloadFile(fileLink.href || String(fileLink));
   const { buffer, width, height } = await normalizePhoto(photoBuffer);
-  const puzzlePaths = buildPuzzlePaths(width, height, session.rows, session.cols, session.seed);
-  session.puzzlePaths = puzzlePaths;
-  const gridSvg = buildPuzzleSvg(width, height, puzzlePaths);
+  const puzzleData = buildPuzzleData(width, height, session.rows, session.cols, session.seed);
+  session.puzzlePaths = puzzleData.paths;
+  session.edgeMeta = puzzleData.edgeMeta;
+  const gridSvg = buildPuzzleSvg(width, height, puzzleData.paths);
 
   const frontBuffer = await sharp(buffer)
     .composite([{ input: Buffer.from(gridSvg), blend: "over" }])
@@ -479,7 +611,15 @@ async function generateFrontImage(ctx, session) {
 }
 
 async function generateBackImage(session) {
-  const svg = buildBackSvg(session.width, session.height, session.rows, session.cols, session.facts, session.puzzlePaths);
+  const svg = buildBackSvg(
+    session.width,
+    session.height,
+    session.rows,
+    session.cols,
+    session.facts,
+    session.puzzlePaths,
+    session.edgeMeta
+  );
   const backBuffer = await sharp({
     create: {
       width: session.width,
@@ -503,7 +643,7 @@ function formatOptions() {
 }
 
 function formatFactsPrompt(session) {
-  return `Пришли факты для пазла: ${session.facts.length}/${session.count}.\nМожно писать по одному факту или сразу несколько строками. Если текст не влезет, я попрошу сократить.`;
+  return `Пришли факты для пазла: ${session.facts.length}/${session.count}.\nМожно писать по одному факту или сразу несколько строками. Эмодзи удаляются. Если текст не влезет, попрошу сократить.`;
 }
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -541,6 +681,7 @@ bot.on("photo", async (ctx) => {
   session.height = null;
   session.seed = Math.floor(Math.random() * 1e9);
   session.puzzlePaths = null;
+  session.edgeMeta = null;
 
   ctx.reply("Сколько деталей в пазле?", formatOptions());
 });
@@ -604,31 +745,47 @@ bot.on("text", async (ctx) => {
     return;
   }
 
-  const lines = text
+  const rawLines = text
     .split(/\n+/)
     .map((line) => line.trim())
     .filter(Boolean);
 
-  if (lines.length === 0) {
+  if (rawLines.length === 0) {
     ctx.reply("Факт пустой. Пришли текст.");
     return;
   }
 
   const cellWidth = session.width / session.cols;
   const cellHeight = session.height / session.rows;
-  const safePadding = Math.max(12, Math.floor(Math.min(cellWidth, cellHeight) * 0.22));
+  const basePadding = Math.max(10, Math.floor(Math.min(cellWidth, cellHeight) * 0.14));
+  let hadSanitized = false;
 
-  for (const line of lines) {
+  for (const rawLine of rawLines) {
     if (session.facts.length >= session.count) break;
+    const cleaned = sanitizeFact(rawLine);
+    if (!cleaned) {
+      ctx.reply("Эмодзи и спецсимволы удаляются. Пришли текст только буквами/цифрами и пунктуацией.");
+      return;
+    }
+    if (cleaned !== rawLine) hadSanitized = true;
+
     const targetIndex = session.facts.length + 1;
-    const fit = fitTextToCell(line, cellWidth, cellHeight, safePadding);
+    const row = Math.floor((targetIndex - 1) / session.cols);
+    const col = (targetIndex - 1) % session.cols;
+    const safeBox = getSafeBox(row, col, cellWidth, cellHeight, session.rows, session.cols, session.edgeMeta, basePadding);
+    const textPadding = getTextPadding(safeBox);
+    const fit = fitTextToCell(cleaned, safeBox.width, safeBox.height, textPadding);
     if (fit.truncated) {
       ctx.reply(
-        `Факт для детали ${targetIndex} слишком длинный и станет нечитаемым.\nСократи текст и пришли заново.`
+        `Факт для детали ${targetIndex} слишком длинный для этой детали.\nСократи текст и пришли заново.`
       );
       return;
     }
-    session.facts.push(line);
+    session.facts.push(cleaned);
+  }
+
+  if (hadSanitized) {
+    ctx.reply("Эмодзи и лишние спецсимволы удалены. Оставлены буквы, цифры и пунктуация.");
   }
 
   if (session.facts.length < session.count) {

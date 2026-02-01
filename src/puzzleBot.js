@@ -747,10 +747,13 @@ function mirrorFacts(facts, rows, cols) {
   return mirrored;
 }
 
-function buildBackSvg(width, height, rows, cols, facts, puzzlePaths, edgeMeta, fontScale = 1, placements = null) {
-  const lines = (puzzlePaths || buildPuzzleData(width, height, rows, cols).paths)
+function buildBackSvg(width, height, rows, cols, facts, puzzlePaths, edgeMeta, fontScale = 1, placements = null, mirror = false) {
+  const linesRaw = (puzzlePaths || buildPuzzleData(width, height, rows, cols).paths)
     .map((pathDef) => `<path d="${pathDef}" />`)
     .join("");
+  const lines = mirror
+    ? `<g transform="translate(${width} 0) scale(-1 1)">${linesRaw}</g>`
+    : linesRaw;
   const cellWidth = width / cols;
   const cellHeight = height / rows;
   const basePadding = Math.max(10, Math.floor(Math.min(cellWidth, cellHeight) * 0.14));
@@ -767,6 +770,7 @@ function buildBackSvg(width, height, rows, cols, facts, puzzlePaths, edgeMeta, f
       const lineHeight = Number(item.lineHeight || fontSize * 1.2);
       const centerX = Number(item.x || 0);
       const centerY = Number(item.y || 0);
+      const rotation = Number(item.rotation || 0);
       const totalHeight = (lines.length - 1) * lineHeight;
       const startY = centerY - totalHeight / 2;
 
@@ -786,7 +790,14 @@ function buildBackSvg(width, height, rows, cols, facts, puzzlePaths, edgeMeta, f
         )}" y="${y.toFixed(2)}">${escapeXml(line)}</text>`;
       });
 
-      textBlocks.push(paths.join("\n"));
+      const block = paths.join("\n");
+      if (rotation) {
+        textBlocks.push(
+          `<g transform="rotate(${rotation.toFixed(2)} ${centerX.toFixed(2)} ${centerY.toFixed(2)})">${block}</g>`
+        );
+      } else {
+        textBlocks.push(block);
+      }
     }
   } else {
     const mirrored = mirrorFacts(facts, rows, cols);
@@ -866,7 +877,7 @@ async function generateFrontImage(ctx, session) {
   return { buffer: frontBuffer, width, height };
 }
 
-async function generateBackImage(session, placements = null) {
+async function generateBackImage(session, placements = null, mirror = false) {
   const svg = buildBackSvg(
     session.width,
     session.height,
@@ -876,7 +887,8 @@ async function generateBackImage(session, placements = null) {
     session.puzzlePaths,
     session.edgeMeta,
     session.fontScale,
-    placements
+    placements,
+    mirror
   );
   const backBuffer = await sharp({
     create: {
@@ -1182,6 +1194,7 @@ bot.on("message", async (ctx) => {
   }
 
   const scale = Number(payload.scale || 1);
+  const mirror = Boolean(payload.mirror);
   const items = Array.isArray(payload.items) ? payload.items : [];
   const placements = items
     .map((item) => ({
@@ -1189,6 +1202,7 @@ bot.on("message", async (ctx) => {
       y: Number(item.y || 0) * scale,
       fontSize: Number(item.fontSize || 16) * scale,
       lineHeight: Number(item.lineHeight || 0) * scale,
+      rotation: Number(item.rotation || 0),
       text: String(item.text || "")
     }))
     .filter((item) => item.text && Number.isFinite(item.x) && Number.isFinite(item.y) && Number.isFinite(item.fontSize));
@@ -1200,7 +1214,7 @@ bot.on("message", async (ctx) => {
 
   try {
     ctx.reply("Готовлю заднюю сторону из твоей раскладки...");
-    const backBuffer = await generateBackImage(session, placements);
+    const backBuffer = await generateBackImage(session, placements, mirror);
     await ctx.replyWithDocument({ source: backBuffer, filename: "puzzle-back.png" }, { caption: "Задняя сторона" });
     ctx.reply("Готово! Если хочешь новый пазл, пришли другое фото.");
     resetSession(ctx.from.id);

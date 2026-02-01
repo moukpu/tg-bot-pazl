@@ -17,6 +17,8 @@
   const textInput = document.getElementById("textInput");
   const fontSizeInput = document.getElementById("fontSize");
   const fontSizeValue = document.getElementById("fontSizeValue");
+  const rotationInput = document.getElementById("rotation");
+  const rotationValue = document.getElementById("rotationValue");
   const fontFamilyInput = document.getElementById("fontFamily");
   const newBtn = document.getElementById("newBtn");
   const autoBtn = document.getElementById("autoBtn");
@@ -30,6 +32,12 @@
   }
   updateFontSizeValue();
   fontSizeInput.addEventListener("input", updateFontSizeValue);
+
+  function updateRotationValue() {
+    rotationValue.textContent = rotationInput.value;
+  }
+  updateRotationValue();
+  rotationInput.addEventListener("input", updateRotationValue);
 
   const displayWidth = Math.max(320, stageWrap.clientWidth - 2);
   const displayHeight = width && height ? (height / width) * displayWidth : Math.max(240, displayWidth * 0.7);
@@ -45,6 +53,19 @@
   const textLayer = new Konva.Layer();
   stage.add(gridLayer);
   stage.add(textLayer);
+
+  const background = new Konva.Rect({
+    x: 0,
+    y: 0,
+    width: displayWidth,
+    height: displayHeight,
+    fill: "#ffffff",
+    listening: false
+  });
+  gridLayer.add(background);
+
+  const gridGroup = new Konva.Group();
+  gridLayer.add(gridGroup);
 
   const transformer = new Konva.Transformer({
     rotateEnabled: false,
@@ -166,14 +187,16 @@
     paths.forEach((path) => {
       const shape = new Konva.Path({
         data: path,
-        stroke: "#888",
-        strokeWidth: 1,
+        stroke: "#666",
+        strokeWidth: 1.2,
         lineJoin: "round",
         lineCap: "round",
         listening: false
       });
-      gridLayer.add(shape);
+      gridGroup.add(shape);
     });
+    gridGroup.scaleX(-1);
+    gridGroup.x(displayWidth);
     gridLayer.draw();
   }
 
@@ -204,25 +227,31 @@
       textInput.value = "";
       fontSizeInput.value = defaultFontSize;
       fontFamilyInput.value = fontFamilyInput.value || "'Noto Sans', Arial, sans-serif";
+      rotationInput.value = 0;
       updateFontSizeValue();
+      updateRotationValue();
       return;
     }
     textInput.value = item.text;
     fontSizeInput.value = item.fontSize;
     fontFamilyInput.value = item.fontFamily;
+    rotationInput.value = item.rotation || 0;
     updateFontSizeValue();
+    updateRotationValue();
   }
 
   function createTextItem(initialText = "") {
     const center = stageCenter();
     const fontSize = Number(fontSizeInput.value || defaultFontSize);
     const fontFamily = fontFamilyInput.value;
+    const rotation = Number(rotationInput.value || 0);
     const node = new Konva.Text({
       x: center.x,
       y: center.y,
       text: initialText,
       fontSize,
       fontFamily,
+      rotation,
       fill: "#111",
       align: "center",
       verticalAlign: "middle",
@@ -244,7 +273,7 @@
     itemCounter += 1;
     const id = String(itemCounter);
     node.setAttr("data-id", id);
-    const item = { id, node, text: initialText, fontSize, fontFamily };
+    const item = { id, node, text: initialText, fontSize, fontFamily, rotation };
     textItems.set(id, item);
     setActive(item);
     return item;
@@ -278,8 +307,10 @@
     const item = textItems.get(activeId);
     item.fontSize = Number(fontSizeInput.value || defaultFontSize);
     item.fontFamily = fontFamilyInput.value;
+    item.rotation = Number(rotationInput.value || 0);
     item.node.fontSize(item.fontSize);
     item.node.fontFamily(item.fontFamily);
+    item.node.rotation(item.rotation);
     item.node.offsetX(item.node.width() / 2);
     item.node.offsetY(item.node.height() / 2);
     textLayer.draw();
@@ -319,6 +350,7 @@
         lineHeight,
         x: node.x(),
         y: node.y(),
+        rotation: item.rotation || 0,
         fontFamily: item.fontFamily
       });
     });
@@ -331,6 +363,7 @@
       height,
       seed,
       scale,
+      mirror: true,
       items
     };
 
@@ -346,6 +379,10 @@
   textInput.addEventListener("input", updateActiveText);
   fontSizeInput.addEventListener("input", () => {
     updateFontSizeValue();
+    updateActiveStyle();
+  });
+  rotationInput.addEventListener("input", () => {
+    updateRotationValue();
     updateActiveStyle();
   });
   fontFamilyInput.addEventListener("change", updateActiveStyle);

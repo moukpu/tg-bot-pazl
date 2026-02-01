@@ -42,10 +42,29 @@ body {
 }
 
 .content {
-  display: grid;
-  grid-template-columns: 1fr 320px;
+  display: flex;
+  flex-direction: column;
   gap: 16px;
   padding: 16px;
+}
+
+.controls {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #e2e2e6;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.controls .grow {
+  flex: 1 1 260px;
+}
+
+.controls .compact {
+  flex: 0 0 180px;
 }
 
 .stage-panel {
@@ -60,7 +79,7 @@ body {
 
 .stage-wrap {
   flex: 1;
-  min-height: 420px;
+  min-height: 460px;
   border: 1px solid #e6e6ea;
   border-radius: 8px;
   overflow: hidden;
@@ -70,16 +89,6 @@ body {
 .hint {
   font-size: 12px;
   color: #666;
-}
-
-.controls {
-  background: #fff;
-  border-radius: 12px;
-  padding: 16px;
-  border: 1px solid #e2e2e6;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
 }
 
 .control-group label {
@@ -115,9 +124,10 @@ body {
 }
 
 .button-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 button {
@@ -140,12 +150,13 @@ button.danger {
   color: #9d1b1b;
 }
 
-@media (max-width: 920px) {
-  .content {
-    grid-template-columns: 1fr;
+@media (max-width: 720px) {
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .controls {
-    order: -1;
+  .controls .compact {
+    flex: 1 1 auto;
   }
 }

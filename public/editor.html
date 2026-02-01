@@ -20,30 +20,20 @@
     </header>
 
     <main class="content">
-      <section class="stage-panel">
-        <div id="stageWrap" class="stage-wrap"></div>
-        <div class="hint">Подсказка: выбери деталь, введи текст, перемести его мышкой.</div>
-      </section>
-
-      <aside class="controls">
-        <div class="control-group">
-          <label>Деталь</label>
-          <select id="pieceSelect"></select>
-        </div>
-
-        <div class="control-group">
+      <section class="controls">
+        <div class="control-group grow">
           <label>Текст</label>
-          <textarea id="textInput" rows="4" placeholder="Факт или текст"></textarea>
-          <div class="note">Эмодзи будут удалены.</div>
+          <textarea id="textInput" rows="3" placeholder="Факт или текст"></textarea>
+          <div class="note">Эмодзи будут удалены. Текст появится сразу на пазле.</div>
         </div>
 
-        <div class="control-group">
+        <div class="control-group compact">
           <label>Размер шрифта</label>
           <input type="range" min="10" max="40" value="18" id="fontSize" />
           <div class="value" id="fontSizeValue">18</div>
         </div>
 
-        <div class="control-group">
+        <div class="control-group compact">
           <label>Шрифт</label>
           <select id="fontFamily">
             <option value="'Noto Sans', Arial, sans-serif">Noto Sans</option>
@@ -53,11 +43,16 @@
         </div>
 
         <div class="button-row">
-          <button id="applyBtn">Применить</button>
-          <button id="autoBtn">Авто</button>
+          <button id="newBtn">Новый текст</button>
+          <button id="autoBtn">В центр</button>
           <button id="removeBtn" class="danger">Удалить</button>
         </div>
-      </aside>
+      </section>
+
+      <section class="stage-panel">
+        <div id="stageWrap" class="stage-wrap"></div>
+        <div class="hint">Кликни по тексту, чтобы редактировать. Перетаскивай внутри деталей.</div>
+      </section>
     </main>
   </div>
 

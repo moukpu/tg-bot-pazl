@@ -6,7 +6,6 @@
   const width = Number(params.get("width") || 0);
   const height = Number(params.get("height") || 0);
   const seed = Number(params.get("seed") || 0);
-  const count = Number(params.get("count") || rows * cols || 0);
 
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   if (tg) {
@@ -15,12 +14,11 @@
   }
 
   const stageWrap = document.getElementById("stageWrap");
-  const pieceSelect = document.getElementById("pieceSelect");
   const textInput = document.getElementById("textInput");
   const fontSizeInput = document.getElementById("fontSize");
   const fontSizeValue = document.getElementById("fontSizeValue");
   const fontFamilyInput = document.getElementById("fontFamily");
-  const applyBtn = document.getElementById("applyBtn");
+  const newBtn = document.getElementById("newBtn");
   const autoBtn = document.getElementById("autoBtn");
   const removeBtn = document.getElementById("removeBtn");
   const sendBtn = document.getElementById("sendBtn");
@@ -43,8 +41,35 @@
     width: displayWidth,
     height: displayHeight
   });
-  const layer = new Konva.Layer();
-  stage.add(layer);
+  const gridLayer = new Konva.Layer();
+  const textLayer = new Konva.Layer();
+  stage.add(gridLayer);
+  stage.add(textLayer);
+
+  const transformer = new Konva.Transformer({
+    rotateEnabled: false,
+    enabledAnchors: [],
+    ignoreStroke: true,
+    borderStroke: "#2a74ff",
+    borderDash: [6, 4],
+    borderStrokeWidth: 1
+  });
+  textLayer.add(transformer);
+
+  function sanitizeText(raw) {
+    let text = String(raw || "");
+    try {
+      text = text.replace(/\p{Extended_Pictographic}/gu, "");
+    } catch (err) {
+      text = text.replace(/[\u{1F300}-\u{1FAFF}]/gu, "");
+    }
+    try {
+      text = text.replace(/[^\p{L}\p{N}\s.,;:!?'"()\-]/gu, "");
+    } catch (err) {
+      text = text.replace(/[^\w\s.,;:!?'"()\-]/g, "");
+    }
+    return text.replace(/\s+/g, " ").trim();
+  }
 
   function createRng(seedValue) {
     let state = seedValue >>> 0;
@@ -144,35 +169,41 @@
         stroke: "#888",
         strokeWidth: 1,
         lineJoin: "round",
-        lineCap: "round"
+        lineCap: "round",
+        listening: false
       });
-      layer.add(shape);
+      gridLayer.add(shape);
     });
-    layer.draw();
+    gridLayer.draw();
   }
 
   const textItems = new Map();
+  let activeId = null;
+  let itemCounter = 0;
 
-  function getPieceIndex() {
-    return Number(pieceSelect.value || 1);
+  function stageCenter() {
+    return { x: displayWidth / 2, y: displayHeight / 2 };
   }
 
-  function pieceCenter(index) {
-    const r = Math.floor((index - 1) / cols);
-    const c = (index - 1) % cols;
-    const cellWidth = displayWidth / cols;
-    const cellHeight = displayHeight / rows;
-    return {
-      x: c * cellWidth + cellWidth / 2,
-      y: r * cellHeight + cellHeight / 2
-    };
+  function setActive(item) {
+    if (!item) {
+      activeId = null;
+      transformer.nodes([]);
+      updateControlsFromItem(null);
+      textLayer.draw();
+      return;
+    }
+    activeId = item.id;
+    transformer.nodes([item.node]);
+    updateControlsFromItem(item);
+    textLayer.draw();
   }
 
-  function updateControlsFromItem(index) {
-    const item = textItems.get(index);
+  function updateControlsFromItem(item) {
     if (!item) {
       textInput.value = "";
       fontSizeInput.value = defaultFontSize;
+      fontFamilyInput.value = fontFamilyInput.value || "'Noto Sans', Arial, sans-serif";
       updateFontSizeValue();
       return;
     }
@@ -182,83 +213,108 @@
     updateFontSizeValue();
   }
 
-  function applyText() {
-    const index = getPieceIndex();
-    const text = textInput.value.trim();
-    const fontSize = Number(fontSizeInput.value || 18);
+  function createTextItem(initialText = "") {
+    const center = stageCenter();
+    const fontSize = Number(fontSizeInput.value || defaultFontSize);
     const fontFamily = fontFamilyInput.value;
-
-    if (!text) {
-      removeText(index);
-      return;
-    }
-
-    let item = textItems.get(index);
-    if (!item) {
-      const center = pieceCenter(index);
-      const node = new Konva.Text({
-        x: center.x,
-        y: center.y,
-        text,
-        fontSize,
-        fontFamily,
-        fill: "#111",
-        align: "center",
-        verticalAlign: "middle",
-        offsetX: 0,
-        offsetY: 0,
-        draggable: true
-      });
+    const node = new Konva.Text({
+      x: center.x,
+      y: center.y,
+      text: initialText,
+      fontSize,
+      fontFamily,
+      fill: "#111",
+      align: "center",
+      verticalAlign: "middle",
+      draggable: true
+    });
+    node.offsetX(node.width() / 2);
+    node.offsetY(node.height() / 2);
+    node.on("dragmove", () => {
       node.offsetX(node.width() / 2);
       node.offsetY(node.height() / 2);
-      node.on("dragend", () => {
-        node.offsetX(node.width() / 2);
-        node.offsetY(node.height() / 2);
-        layer.draw();
-      });
-      layer.add(node);
-      item = { node, text, fontSize, fontFamily };
-      textItems.set(index, item);
-    } else {
-      item.text = text;
-      item.fontSize = fontSize;
-      item.fontFamily = fontFamily;
-      item.node.text(text);
-      item.node.fontSize(fontSize);
-      item.node.fontFamily(fontFamily);
-      item.node.offsetX(item.node.width() / 2);
-      item.node.offsetY(item.node.height() / 2);
+      textLayer.draw();
+    });
+    node.on("click", () => {
+      const item = textItems.get(node.getAttr("data-id"));
+      if (item) setActive(item);
+    });
+    textLayer.add(node);
+
+    itemCounter += 1;
+    const id = String(itemCounter);
+    node.setAttr("data-id", id);
+    const item = { id, node, text: initialText, fontSize, fontFamily };
+    textItems.set(id, item);
+    setActive(item);
+    return item;
+  }
+
+  function ensureActiveItem() {
+    if (activeId && textItems.has(activeId)) {
+      return textItems.get(activeId);
     }
-    layer.draw();
+    return createTextItem("");
+  }
+
+  function updateActiveText() {
+    const value = textInput.value;
+    const cleaned = sanitizeText(value);
+    if (cleaned !== value) {
+      textInput.value = cleaned;
+    }
+    const item = ensureActiveItem();
+    item.text = cleaned;
+    item.node.text(cleaned);
+    item.node.fontSize(Number(fontSizeInput.value || defaultFontSize));
+    item.node.fontFamily(fontFamilyInput.value);
+    item.node.offsetX(item.node.width() / 2);
+    item.node.offsetY(item.node.height() / 2);
+    textLayer.draw();
+  }
+
+  function updateActiveStyle() {
+    if (!activeId || !textItems.has(activeId)) return;
+    const item = textItems.get(activeId);
+    item.fontSize = Number(fontSizeInput.value || defaultFontSize);
+    item.fontFamily = fontFamilyInput.value;
+    item.node.fontSize(item.fontSize);
+    item.node.fontFamily(item.fontFamily);
+    item.node.offsetX(item.node.width() / 2);
+    item.node.offsetY(item.node.height() / 2);
+    textLayer.draw();
   }
 
   function autoPlace() {
-    const index = getPieceIndex();
-    const item = textItems.get(index);
-    if (!item) return;
-    const center = pieceCenter(index);
+    if (!activeId || !textItems.has(activeId)) return;
+    const item = textItems.get(activeId);
+    const center = stageCenter();
     item.node.position(center);
     item.node.offsetX(item.node.width() / 2);
     item.node.offsetY(item.node.height() / 2);
-    layer.draw();
+    textLayer.draw();
   }
 
-  function removeText(index) {
-    const item = textItems.get(index);
-    if (!item) return;
+  function removeActiveText() {
+    if (!activeId || !textItems.has(activeId)) return;
+    const item = textItems.get(activeId);
     item.node.destroy();
-    textItems.delete(index);
-    layer.draw();
+    textItems.delete(activeId);
+    activeId = null;
+    transformer.nodes([]);
+    updateControlsFromItem(null);
+    textLayer.draw();
   }
 
   function sendData() {
     const items = [];
-    textItems.forEach((item, index) => {
+    textItems.forEach((item) => {
+      const cleanText = sanitizeText(item.text || "");
+      if (!cleanText) return;
       const node = item.node;
       const lineHeight = (node.lineHeight() || 1.2) * node.fontSize();
       items.push({
-        index,
-        text: item.text,
+        text: cleanText,
         fontSize: item.fontSize,
         lineHeight,
         x: node.x(),
@@ -287,21 +343,22 @@
     }
   }
 
-  if (rows && cols) {
-    for (let i = 1; i <= count; i += 1) {
-      const opt = document.createElement("option");
-      opt.value = String(i);
-      opt.textContent = `Деталь ${i}`;
-      pieceSelect.appendChild(opt);
-    }
-  }
-
-  pieceSelect.addEventListener("change", () => updateControlsFromItem(getPieceIndex()));
-  applyBtn.addEventListener("click", applyText);
+  textInput.addEventListener("input", updateActiveText);
+  fontSizeInput.addEventListener("input", () => {
+    updateFontSizeValue();
+    updateActiveStyle();
+  });
+  fontFamilyInput.addEventListener("change", updateActiveStyle);
+  newBtn.addEventListener("click", () => {
+    createTextItem("");
+    textInput.value = "";
+    updateFontSizeValue();
+    textInput.focus();
+  });
   autoBtn.addEventListener("click", autoPlace);
-  removeBtn.addEventListener("click", () => removeText(getPieceIndex()));
+  removeBtn.addEventListener("click", removeActiveText);
   sendBtn.addEventListener("click", sendData);
 
   drawPuzzle();
-  updateControlsFromItem(getPieceIndex());
+  updateControlsFromItem(null);
 })();

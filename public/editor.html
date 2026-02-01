@@ -1,0 +1,66 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Редактор пазла</title>
+  <link rel="stylesheet" href="editor.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/konva@9.3.16/konva.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3-shape@3.2.0/dist/d3-shape.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div>
+        <div class="title">Редактор задней стороны</div>
+        <div class="subtitle">Перетаскивай текст по деталям, меняй размер и шрифт.</div>
+      </div>
+      <button id="sendBtn" class="primary">Готово</button>
+    </header>
+
+    <main class="content">
+      <section class="stage-panel">
+        <div id="stageWrap" class="stage-wrap"></div>
+        <div class="hint">Подсказка: выбери деталь, введи текст, перемести его мышкой.</div>
+      </section>
+
+      <aside class="controls">
+        <div class="control-group">
+          <label>Деталь</label>
+          <select id="pieceSelect"></select>
+        </div>
+
+        <div class="control-group">
+          <label>Текст</label>
+          <textarea id="textInput" rows="4" placeholder="Факт или текст"></textarea>
+          <div class="note">Эмодзи будут удалены.</div>
+        </div>
+
+        <div class="control-group">
+          <label>Размер шрифта</label>
+          <input type="range" min="10" max="40" value="18" id="fontSize" />
+          <div class="value" id="fontSizeValue">18</div>
+        </div>
+
+        <div class="control-group">
+          <label>Шрифт</label>
+          <select id="fontFamily">
+            <option value="'Noto Sans', Arial, sans-serif">Noto Sans</option>
+            <option value="Arial, sans-serif">Arial</option>
+            <option value="'Times New Roman', serif">Times</option>
+          </select>
+        </div>
+
+        <div class="button-row">
+          <button id="applyBtn">Применить</button>
+          <button id="autoBtn">Авто</button>
+          <button id="removeBtn" class="danger">Удалить</button>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="editor.js"></script>
+</body>
+</html>

@@ -1,10 +1,12 @@
 ﻿import dotenv from "dotenv";
 import fs from "fs";
+import http from "http";
 import https from "https";
 import path from "path";
 import sharp from "sharp";
 import { line, curveBasis } from "d3-shape";
 import TextToSVG from "text-to-svg";
+import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { Telegraf, Markup } from "telegraf";
 
@@ -18,6 +20,8 @@ const LINE_COLOR = process.env.PUZZLE_LINE_COLOR || "#000000";
 const MIN_FONT_SIZE = Number.parseInt(process.env.PUZZLE_MIN_FONT_SIZE || "12", 10);
 const MAX_FONT_SIZE = Number.parseInt(process.env.PUZZLE_MAX_FONT_SIZE || "28", 10);
 const MAX_TEXT_LINES = Number.parseInt(process.env.PUZZLE_MAX_LINES || "3", 10);
+const WEBAPP_URL = (process.env.WEBAPP_URL || "").trim();
+const PORT = Number(process.env.PORT || 3000);
 const FONT_SCALE_BY_COUNT = {
   12: 0.9,
   15: 0.75,
@@ -66,10 +70,47 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
+const PUBLIC_DIR = path.resolve(__dirname, "..", "public");
+const MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".json": "application/json; charset=utf-8"
+};
+
+function serveStatic(req, res) {
+  const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+  const pathname = url.pathname === "/" ? "/editor.html" : url.pathname;
+  const filePath = path.resolve(PUBLIC_DIR, `.${pathname}`);
+  if (!filePath.startsWith(PUBLIC_DIR)) {
+    res.writeHead(403);
+    res.end("Forbidden");
+    return;
+  }
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      res.writeHead(404);
+      res.end("Not found");
+      return;
+    }
+    const ext = path.extname(filePath).toLowerCase();
+    const type = MIME_TYPES[ext] || "application/octet-stream";
+    res.writeHead(200, { "Content-Type": type });
+    res.end(data);
+  });
+}
+
 const sessions = new Map();
+const sessionsById = new Map();
 
 function createSession() {
   return {
+    id: crypto.randomUUID(),
+    userId: null,
     step: "await_photo",
     photoFileId: null,
     rows: null,
@@ -87,12 +128,25 @@ function createSession() {
 
 function getSession(userId) {
   const key = String(userId);
-  if (!sessions.has(key)) sessions.set(key, createSession());
-  return sessions.get(key);
+  if (!sessions.has(key)) {
+    const session = createSession();
+    session.userId = key;
+    sessions.set(key, session);
+    sessionsById.set(session.id, session);
+  }
+  const session = sessions.get(key);
+  if (session && !session.userId) session.userId = key;
+  return session;
 }
 
 function resetSession(userId) {
-  sessions.set(String(userId), createSession());
+  const key = String(userId);
+  const prev = sessions.get(key);
+  if (prev?.id) sessionsById.delete(prev.id);
+  const session = createSession();
+  session.userId = key;
+  sessions.set(key, session);
+  sessionsById.set(session.id, session);
 }
 
 function downloadFile(url, redirects = 0) {
@@ -693,31 +747,30 @@ function mirrorFacts(facts, rows, cols) {
   return mirrored;
 }
 
-function buildBackSvg(width, height, rows, cols, facts, puzzlePaths, edgeMeta, fontScale = 1) {
+function buildBackSvg(width, height, rows, cols, facts, puzzlePaths, edgeMeta, fontScale = 1, placements = null) {
   const lines = (puzzlePaths || buildPuzzleData(width, height, rows, cols).paths)
     .map((pathDef) => `<path d="${pathDef}" />`)
     .join("");
   const cellWidth = width / cols;
   const cellHeight = height / rows;
   const basePadding = Math.max(10, Math.floor(Math.min(cellWidth, cellHeight) * 0.14));
-  const mirrored = mirrorFacts(facts, rows, cols);
-
   const textBlocks = [];
-  for (let r = 0; r < rows; r += 1) {
-    for (let c = 0; c < cols; c += 1) {
-      const index = r * cols + c;
-      const text = mirrored[index] || "";
-      if (!text) continue;
 
-      const placement = findBestPlacement(text, r, c, cellWidth, cellHeight, rows, cols, edgeMeta, basePadding, fontScale);
-      const { lines: wrappedLines, fontSize, lineHeight } = placement.fit;
-      const centerX = placement.centerX;
-      const centerY = placement.centerY;
+  if (placements && placements.length > 0) {
+    for (const item of placements) {
+      const cleanText = sanitizeFact(item.text || "");
+      if (!cleanText) continue;
+      const lines = cleanText.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+      if (lines.length === 0) continue;
 
-      const totalHeight = (wrappedLines.length - 1) * lineHeight;
+      const fontSize = Number(item.fontSize || 16);
+      const lineHeight = Number(item.lineHeight || fontSize * 1.2);
+      const centerX = Number(item.x || 0);
+      const centerY = Number(item.y || 0);
+      const totalHeight = (lines.length - 1) * lineHeight;
       const startY = centerY - totalHeight / 2;
 
-      const paths = wrappedLines.map((line, idx) => {
+      const paths = lines.map((line, idx) => {
         const y = startY + idx * lineHeight;
         if (textToSvg) {
           return textToSvg.getPath(line, {
@@ -734,6 +787,52 @@ function buildBackSvg(width, height, rows, cols, facts, puzzlePaths, edgeMeta, f
       });
 
       textBlocks.push(paths.join("\n"));
+    }
+  } else {
+    const mirrored = mirrorFacts(facts, rows, cols);
+    for (let r = 0; r < rows; r += 1) {
+      for (let c = 0; c < cols; c += 1) {
+        const index = r * cols + c;
+        const text = mirrored[index] || "";
+        if (!text) continue;
+
+        const placement = findBestPlacement(
+          text,
+          r,
+          c,
+          cellWidth,
+          cellHeight,
+          rows,
+          cols,
+          edgeMeta,
+          basePadding,
+          fontScale
+        );
+        const { lines: wrappedLines, fontSize, lineHeight } = placement.fit;
+        const centerX = placement.centerX;
+        const centerY = placement.centerY;
+
+        const totalHeight = (wrappedLines.length - 1) * lineHeight;
+        const startY = centerY - totalHeight / 2;
+
+        const paths = wrappedLines.map((line, idx) => {
+          const y = startY + idx * lineHeight;
+          if (textToSvg) {
+            return textToSvg.getPath(line, {
+              x: centerX,
+              y,
+              fontSize,
+              anchor: "center middle",
+              attributes: { fill: "#111" }
+            });
+          }
+          return `<text font-size="${fontSize}" text-anchor="middle" fill="#111" font-family="${FONT_FAMILY}" x="${centerX.toFixed(
+            2
+          )}" y="${y.toFixed(2)}">${escapeXml(line)}</text>`;
+        });
+
+        textBlocks.push(paths.join("\n"));
+      }
     }
   }
 
@@ -767,7 +866,7 @@ async function generateFrontImage(ctx, session) {
   return { buffer: frontBuffer, width, height };
 }
 
-async function generateBackImage(session) {
+async function generateBackImage(session, placements = null) {
   const svg = buildBackSvg(
     session.width,
     session.height,
@@ -776,7 +875,8 @@ async function generateBackImage(session) {
     session.facts,
     session.puzzlePaths,
     session.edgeMeta,
-    session.fontScale
+    session.fontScale,
+    placements
   );
   const backBuffer = await sharp({
     create: {
@@ -802,6 +902,21 @@ function formatOptions() {
 
 function formatFactsPrompt(session) {
   return `Пришли факты для пазла: ${session.facts.length}/${session.count}.\nМожно писать по одному факту или сразу несколько строками. Эмодзи удаляются. Если текст не влезет, попрошу сократить.`;
+}
+
+function buildWebAppUrl(session) {
+  if (!WEBAPP_URL) return "";
+  const base = WEBAPP_URL.replace(/\/+$/, "");
+  const params = new URLSearchParams({
+    pid: session.id,
+    rows: String(session.rows || ""),
+    cols: String(session.cols || ""),
+    width: String(session.width || ""),
+    height: String(session.height || ""),
+    seed: String(session.seed || ""),
+    count: String(session.count || "")
+  });
+  return `${base}/editor.html?${params.toString()}`;
 }
 
 async function sendProgressPreview(ctx, session, caption) {
@@ -888,6 +1003,13 @@ bot.action(/size:(\d+)/, async (ctx) => {
     session.step = "await_facts";
 
     await ctx.replyWithDocument({ source: buffer, filename: "puzzle-front.png" }, { caption: "Передняя сторона" });
+    const webAppUrl = buildWebAppUrl(session);
+    if (webAppUrl) {
+      await ctx.reply(
+        "Открыть редактор задней стороны можно в веб‑аппе:",
+        Markup.inlineKeyboard([Markup.button.webApp("Открыть редактор", webAppUrl)])
+      );
+    }
     ctx.reply(formatFactsPrompt(session));
   } catch (err) {
     console.error("Front image error", err);
@@ -1019,8 +1141,76 @@ bot.on("text", async (ctx) => {
   }
 });
 
+bot.on("message", async (ctx) => {
+  const data = ctx.message?.web_app_data?.data;
+  if (!data) return;
+
+  let payload;
+  try {
+    payload = JSON.parse(data);
+  } catch (err) {
+    ctx.reply("Не удалось прочитать данные из веб‑аппа.");
+    return;
+  }
+
+  const pid = String(payload.pid || "");
+  if (!pid) {
+    ctx.reply("Нет ID пазла. Открой редактор заново.");
+    return;
+  }
+
+  const session = sessionsById.get(pid);
+  if (!session) {
+    ctx.reply("Сессия пазла не найдена. Открой редактор заново.");
+    return;
+  }
+  if (session.userId && String(session.userId) !== String(ctx.from.id)) {
+    ctx.reply("Это не твой пазл.");
+    return;
+  }
+
+  const scale = Number(payload.scale || 1);
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const placements = items
+    .map((item) => ({
+      x: Number(item.x || 0) * scale,
+      y: Number(item.y || 0) * scale,
+      fontSize: Number(item.fontSize || 16) * scale,
+      lineHeight: Number(item.lineHeight || 0) * scale,
+      text: String(item.text || "")
+    }))
+    .filter((item) => item.text && Number.isFinite(item.x) && Number.isFinite(item.y) && Number.isFinite(item.fontSize));
+
+  if (placements.length === 0) {
+    ctx.reply("В веб‑аппе нет текста. Добавь хотя бы один факт и нажми «Готово».");
+    return;
+  }
+
+  try {
+    ctx.reply("Готовлю заднюю сторону из твоей раскладки...");
+    const backBuffer = await generateBackImage(session, placements);
+    await ctx.replyWithDocument({ source: backBuffer, filename: "puzzle-back.png" }, { caption: "Задняя сторона" });
+    ctx.reply("Готово! Если хочешь новый пазл, пришли другое фото.");
+    resetSession(ctx.from.id);
+  } catch (err) {
+    console.error("WebApp render error", err);
+    ctx.reply("Не получилось собрать изображение. Попробуй ещё раз.");
+  }
+});
+
+const webServer = http.createServer(serveStatic);
+webServer.listen(PORT, () => {
+  console.log(`Web app server running on port ${PORT}`);
+});
+
 bot.launch();
 console.log("Puzzle bot started");
 
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+process.once("SIGINT", () => {
+  webServer.close();
+  bot.stop("SIGINT");
+});
+process.once("SIGTERM", () => {
+  webServer.close();
+  bot.stop("SIGTERM");
+});

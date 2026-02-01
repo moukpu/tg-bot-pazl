@@ -3,6 +3,7 @@ import fs from "fs";
 import https from "https";
 import path from "path";
 import sharp from "sharp";
+import { line, curveBasis } from "d3-shape";
 import { fileURLToPath } from "url";
 import { Telegraf, Markup } from "telegraf";
 
@@ -55,7 +56,9 @@ function createSession() {
     count: null,
     width: null,
     height: null,
-    facts: []
+    facts: [],
+    seed: null,
+    puzzlePaths: null
   };
 }
 
@@ -119,95 +122,109 @@ function fmt(value) {
   return Number(value.toFixed(2));
 }
 
-function verticalEdgePath(x, y0, y1, dir, tabSpan, knobRadius, neckWidth, centerOffset) {
-  const ym = (y0 + y1) / 2;
-  const yStart = ym - tabSpan / 2;
-  const yEnd = ym + tabSpan / 2;
-  const neckHalf = neckWidth / 2;
-  const yNeckStart = ym - neckHalf;
-  const yNeckEnd = ym + neckHalf;
-  const safeRadius = Math.max(2, knobRadius);
-  const d = Math.sqrt(Math.max(1, safeRadius * safeRadius - neckHalf * neckHalf));
-  const safeOffset = Math.max(safeRadius + 1, centerOffset);
-  const xNeck = x + dir * Math.max(1, safeOffset - d);
-  const sweep = dir === 1 ? 1 : 0;
+const curvedLine = line().curve(curveBasis);
 
-  return [
-    `M ${fmt(x)} ${fmt(y0)}`,
-    `L ${fmt(x)} ${fmt(yStart)}`,
-    `L ${fmt(x)} ${fmt(yNeckStart)}`,
-    `L ${fmt(xNeck)} ${fmt(yNeckStart)}`,
-    `A ${fmt(safeRadius)} ${fmt(safeRadius)} 0 1 ${sweep} ${fmt(xNeck)} ${fmt(yNeckEnd)}`,
-    `L ${fmt(x)} ${fmt(yNeckEnd)}`,
-    `L ${fmt(x)} ${fmt(yEnd)}`,
-    `L ${fmt(x)} ${fmt(y1)}`
-  ].join(" ");
+function createRng(seed) {
+  let state = seed >>> 0;
+  return function rand() {
+    state += 0x6d2b79f5;
+    let result = Math.imul(state ^ (state >>> 15), state | 1);
+    result ^= result + Math.imul(result ^ (result >>> 7), result | 61);
+    return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-function horizontalEdgePath(y, x0, x1, dir, tabSpan, knobRadius, neckWidth, centerOffset) {
-  const xm = (x0 + x1) / 2;
-  const xStart = xm - tabSpan / 2;
-  const xEnd = xm + tabSpan / 2;
-  const neckHalf = neckWidth / 2;
-  const xNeckStart = xm - neckHalf;
-  const xNeckEnd = xm + neckHalf;
-  const safeRadius = Math.max(2, knobRadius);
-  const d = Math.sqrt(Math.max(1, safeRadius * safeRadius - neckHalf * neckHalf));
-  const safeOffset = Math.max(safeRadius + 1, centerOffset);
-  const yNeck = y + dir * Math.max(1, safeOffset - d);
-  const sweep = dir === 1 ? 1 : 0;
-
-  return [
-    `M ${fmt(x0)} ${fmt(y)}`,
-    `L ${fmt(xStart)} ${fmt(y)}`,
-    `L ${fmt(xNeckStart)} ${fmt(y)}`,
-    `L ${fmt(xNeckStart)} ${fmt(yNeck)}`,
-    `A ${fmt(safeRadius)} ${fmt(safeRadius)} 0 1 ${sweep} ${fmt(xNeckEnd)} ${fmt(yNeck)}`,
-    `L ${fmt(xNeckEnd)} ${fmt(y)}`,
-    `L ${fmt(xEnd)} ${fmt(y)}`,
-    `L ${fmt(x1)} ${fmt(y)}`
-  ].join(" ");
+function randomBetween(rng, min, max) {
+  return rng() * (max - min) + min;
 }
 
-function buildPuzzlePaths(width, height, rows, cols) {
-  const paths = [];
-  const cellWidth = width / cols;
-  const cellHeight = height / rows;
-  const baseSize = Math.min(cellWidth, cellHeight);
-  const tabSpan = baseSize * 0.7;
-  const knobRadius = baseSize * 0.24;
-  const neckWidth = knobRadius * 0.5;
-  const centerOffset = knobRadius + baseSize * 0.08;
+function edgeDistributions(rng) {
+  const baselineOffsets = {
+    xMin: 51,
+    xMax: 62,
+    yMin: -15,
+    yMax: 5
+  };
+  const upperOffsets = {
+    xMin: 20,
+    xMax: 30,
+    yMin: 20,
+    yMax: 44
+  };
 
-  paths.push(`M 0 0 H ${fmt(width)} V ${fmt(height)} H 0 Z`);
+  const p1 = [0, 0];
+  const p2 = [randomBetween(rng, baselineOffsets.xMin, baselineOffsets.xMax), randomBetween(rng, baselineOffsets.yMin, baselineOffsets.yMax)];
+  const p3 = [randomBetween(rng, upperOffsets.xMin, upperOffsets.xMax), randomBetween(rng, upperOffsets.yMin, upperOffsets.yMax)];
+  const p4 = [
+    randomBetween(rng, 100 - upperOffsets.xMax, 100 - upperOffsets.xMin),
+    randomBetween(rng, upperOffsets.yMin, upperOffsets.yMax)
+  ];
+  const p5 = [
+    randomBetween(rng, 100 - baselineOffsets.xMax, 100 - baselineOffsets.xMin),
+    randomBetween(rng, baselineOffsets.yMin, baselineOffsets.yMax)
+  ];
+  const p6 = [100, 0];
 
-  for (let c = 1; c < cols; c += 1) {
-    const x = cellWidth * c;
-    for (let r = 0; r < rows; r += 1) {
-      const y0 = cellHeight * r;
-      const y1 = cellHeight * (r + 1);
-      const dir = (r + c) % 2 === 0 ? 1 : -1;
-      paths.push(verticalEdgePath(x, y0, y1, dir, tabSpan, knobRadius, neckWidth, centerOffset));
+  const sign = rng() < 0.5 ? -1 : 1;
+  return [p1, p2, p3, p4, p5, p6].map((point) => [point[0] / 100, (point[1] * sign) / 100]);
+}
+
+function buildDistributions(rowCount, columnCount, rng) {
+  const lineGroups = [];
+  lineGroups.push(new Array(columnCount).fill([[0, 0], [1, 0]]));
+
+  for (let i = 1; i < rowCount; i += 1) {
+    const lines = [];
+    for (let j = 0; j < columnCount; j += 1) {
+      lines.push(edgeDistributions(rng));
     }
+    lineGroups.push(lines);
   }
 
-  for (let r = 1; r < rows; r += 1) {
-    const y = cellHeight * r;
-    for (let c = 0; c < cols; c += 1) {
-      const x0 = cellWidth * c;
-      const x1 = cellWidth * (c + 1);
-      const dir = (r + c) % 2 === 0 ? -1 : 1;
-      paths.push(horizontalEdgePath(y, x0, x1, dir, tabSpan, knobRadius, neckWidth, centerOffset));
-    }
-  }
-
-  return paths;
+  lineGroups.push(new Array(columnCount).fill([[0, 0], [1, 0]]));
+  return lineGroups;
 }
 
-function buildPuzzleSvg(width, height, rows, cols) {
-  const paths = buildPuzzlePaths(width, height, rows, cols)
-    .map((pathDef) => `<path d="${pathDef}" />`)
-    .join("");
+function transposePoint(point) {
+  return [point[1], point[0]];
+}
+
+function offsetPoint(point, offsetX, offsetY, columnWidth, rowHeight) {
+  return [(point[0] + offsetX) * columnWidth, (point[1] + offsetY) * rowHeight];
+}
+
+function offsetPoints(lineGroups, offsetFn) {
+  return lineGroups.map((lines, i) => lines.map((line, j) => line.map((point) => offsetFn(point, i, j))));
+}
+
+function lineToPath(points) {
+  if (points.length <= 2) {
+    const [a, b] = points;
+    return `M ${fmt(a[0])} ${fmt(a[1])} L ${fmt(b[0])} ${fmt(b[1])}`;
+  }
+  const path = curvedLine(points);
+  return path || "";
+}
+
+function buildPuzzlePaths(width, height, rows, cols, seed) {
+  const rng = createRng(Number.isFinite(seed) ? seed : Math.floor(Math.random() * 1e9));
+  const rowHeight = height / rows;
+  const columnWidth = width / cols;
+
+  const rowsLines = buildDistributions(rows, cols, rng);
+  const columnsLines = buildDistributions(cols, rows, rng);
+
+  const rowsOffset = offsetPoints(rowsLines, (point, i, j) => offsetPoint(point, j, i, columnWidth, rowHeight));
+  const columnsOffset = offsetPoints(columnsLines, (point, i, j) =>
+    offsetPoint(transposePoint(point), i, j, columnWidth, rowHeight)
+  );
+
+  const allLines = [...rowsOffset.flat(), ...columnsOffset.flat()];
+  return allLines.map(lineToPath).filter(Boolean);
+}
+
+function buildPuzzleSvg(width, height, puzzlePaths) {
+  const paths = puzzlePaths.map((pathDef) => `<path d="${pathDef}" />`).join("");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
@@ -324,8 +341,8 @@ function mirrorFacts(facts, rows, cols) {
   return mirrored;
 }
 
-function buildBackSvg(width, height, rows, cols, facts) {
-  const lines = buildPuzzlePaths(width, height, rows, cols)
+function buildBackSvg(width, height, rows, cols, facts, puzzlePaths) {
+  const lines = (puzzlePaths || buildPuzzlePaths(width, height, rows, cols))
     .map((pathDef) => `<path d="${pathDef}" />`)
     .join("");
   const cellWidth = width / cols;
@@ -374,7 +391,9 @@ async function generateFrontImage(ctx, session) {
   const fileLink = await ctx.telegram.getFileLink(session.photoFileId);
   const photoBuffer = await downloadFile(fileLink.href || String(fileLink));
   const { buffer, width, height } = await normalizePhoto(photoBuffer);
-  const gridSvg = buildPuzzleSvg(width, height, session.rows, session.cols);
+  const puzzlePaths = buildPuzzlePaths(width, height, session.rows, session.cols, session.seed);
+  session.puzzlePaths = puzzlePaths;
+  const gridSvg = buildPuzzleSvg(width, height, puzzlePaths);
 
   const frontBuffer = await sharp(buffer)
     .composite([{ input: Buffer.from(gridSvg), blend: "over" }])
@@ -385,7 +404,7 @@ async function generateFrontImage(ctx, session) {
 }
 
 async function generateBackImage(session) {
-  const svg = buildBackSvg(session.width, session.height, session.rows, session.cols, session.facts);
+  const svg = buildBackSvg(session.width, session.height, session.rows, session.cols, session.facts, session.puzzlePaths);
   const backBuffer = await sharp({
     create: {
       width: session.width,
@@ -445,6 +464,8 @@ bot.on("photo", async (ctx) => {
   session.count = null;
   session.width = null;
   session.height = null;
+  session.seed = Math.floor(Math.random() * 1e9);
+  session.puzzlePaths = null;
 
   ctx.reply("Сколько деталей в пазле?", formatOptions());
 });

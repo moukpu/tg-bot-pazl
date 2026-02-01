@@ -1,15 +1,36 @@
 ﻿import dotenv from "dotenv";
+import fs from "fs";
 import https from "https";
+import path from "path";
 import sharp from "sharp";
+import { fileURLToPath } from "url";
 import { Telegraf, Markup } from "telegraf";
 
 dotenv.config();
 
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const PUZZLE_MAX_SIDE = Number(process.env.PUZZLE_MAX_SIDE || 2000);
-const LINE_WIDTH = Number(process.env.PUZZLE_LINE_WIDTH || 2);
-const LINE_OPACITY = Number(process.env.PUZZLE_LINE_OPACITY || 0.6);
+const LINE_WIDTH = Number.parseFloat(process.env.PUZZLE_LINE_WIDTH || "1");
+const LINE_OPACITY = Number.parseFloat(process.env.PUZZLE_LINE_OPACITY || "0.45");
 const LINE_COLOR = process.env.PUZZLE_LINE_COLOR || "#000000";
+const MIN_FONT_SIZE = Number.parseInt(process.env.PUZZLE_MIN_FONT_SIZE || "12", 10);
+const MAX_FONT_SIZE = Number.parseInt(process.env.PUZZLE_MAX_FONT_SIZE || "28", 10);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const FONT_PATH = path.resolve(__dirname, "..", "assets", "NotoSans-Regular.ttf");
+let FONT_DATA = "";
+
+try {
+  FONT_DATA = fs.readFileSync(FONT_PATH).toString("base64");
+} catch (err) {
+  console.warn("Font file not found, fallback fonts will be used.", err?.message || err);
+}
+
+const FONT_FAMILY = FONT_DATA ? "PuzzleFont, Arial, sans-serif" : "Arial, sans-serif";
+const FONT_STYLE = FONT_DATA
+  ? `@font-face { font-family: 'PuzzleFont'; src: url(data:font/ttf;base64,${FONT_DATA}) format('truetype'); }`
+  : "";
 
 const SIZE_OPTIONS = [
   { count: 12, rows: 3, cols: 4 },
@@ -94,25 +115,84 @@ async function normalizePhoto(buffer) {
   return { buffer: data, width: info.width, height: info.height };
 }
 
-function buildGridLines(width, height, rows, cols) {
-  const lines = [];
-  for (let c = 1; c < cols; c += 1) {
-    const x = Math.round((width / cols) * c);
-    lines.push(`<line x1="${x}" y1="0" x2="${x}" y2="${height}" />`);
-  }
-  for (let r = 1; r < rows; r += 1) {
-    const y = Math.round((height / rows) * r);
-    lines.push(`<line x1="0" y1="${y}" x2="${width}" y2="${y}" />`);
-  }
-  return lines.join("");
+function fmt(value) {
+  return Number(value.toFixed(2));
 }
 
-function buildGridSvg(width, height, rows, cols) {
-  const lines = buildGridLines(width, height, rows, cols);
+function verticalEdgePath(x, y0, y1, dir, tabSize, tabDepth) {
+  const ym = (y0 + y1) / 2;
+  const yA = ym - tabSize;
+  const yB = ym + tabSize;
+  const xTab = x + dir * tabDepth;
+  const curve = tabSize * 0.6;
+
+  return [
+    `M ${fmt(x)} ${fmt(y0)}`,
+    `L ${fmt(x)} ${fmt(yA)}`,
+    `C ${fmt(x)} ${fmt(yA + curve)} ${fmt(xTab)} ${fmt(ym - curve)} ${fmt(xTab)} ${fmt(ym)}`,
+    `C ${fmt(xTab)} ${fmt(ym + curve)} ${fmt(x)} ${fmt(yB - curve)} ${fmt(x)} ${fmt(yB)}`,
+    `L ${fmt(x)} ${fmt(y1)}`
+  ].join(" ");
+}
+
+function horizontalEdgePath(y, x0, x1, dir, tabSize, tabDepth) {
+  const xm = (x0 + x1) / 2;
+  const xA = xm - tabSize;
+  const xB = xm + tabSize;
+  const yTab = y + dir * tabDepth;
+  const curve = tabSize * 0.6;
+
+  return [
+    `M ${fmt(x0)} ${fmt(y)}`,
+    `L ${fmt(xA)} ${fmt(y)}`,
+    `C ${fmt(xA + curve)} ${fmt(y)} ${fmt(xm - curve)} ${fmt(yTab)} ${fmt(xm)} ${fmt(yTab)}`,
+    `C ${fmt(xm + curve)} ${fmt(yTab)} ${fmt(xB - curve)} ${fmt(y)} ${fmt(xB)} ${fmt(y)}`,
+    `L ${fmt(x1)} ${fmt(y)}`
+  ].join(" ");
+}
+
+function buildPuzzlePaths(width, height, rows, cols) {
+  const paths = [];
+  const cellWidth = width / cols;
+  const cellHeight = height / rows;
+  const baseSize = Math.min(cellWidth, cellHeight);
+  const tabSize = baseSize * 0.28;
+  const tabDepth = tabSize * 0.55;
+
+  paths.push(`M 0 0 H ${fmt(width)} V ${fmt(height)} H 0 Z`);
+
+  for (let c = 1; c < cols; c += 1) {
+    const x = cellWidth * c;
+    for (let r = 0; r < rows; r += 1) {
+      const y0 = cellHeight * r;
+      const y1 = cellHeight * (r + 1);
+      const dir = (r + c) % 2 === 0 ? 1 : -1;
+      paths.push(verticalEdgePath(x, y0, y1, dir, tabSize, tabDepth));
+    }
+  }
+
+  for (let r = 1; r < rows; r += 1) {
+    const y = cellHeight * r;
+    for (let c = 0; c < cols; c += 1) {
+      const x0 = cellWidth * c;
+      const x1 = cellWidth * (c + 1);
+      const dir = (r + c) % 2 === 0 ? -1 : 1;
+      paths.push(horizontalEdgePath(y, x0, x1, dir, tabSize, tabDepth));
+    }
+  }
+
+  return paths;
+}
+
+function buildPuzzleSvg(width, height, rows, cols) {
+  const paths = buildPuzzlePaths(width, height, rows, cols)
+    .map((pathDef) => `<path d="${pathDef}" />`)
+    .join("");
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-  <g fill="none" stroke="${LINE_COLOR}" stroke-opacity="${LINE_OPACITY}" stroke-width="${LINE_WIDTH}" shape-rendering="crispEdges">
-    ${lines}
+  <g fill="none" stroke="${LINE_COLOR}" stroke-opacity="${LINE_OPACITY}" stroke-width="${LINE_WIDTH}" stroke-linecap="round" stroke-linejoin="round">
+    ${paths}
   </g>
 </svg>`;
 }
@@ -175,25 +255,41 @@ function wrapText(text, maxChars, maxLines) {
 function fitTextToCell(text, cellWidth, cellHeight) {
   const minSide = Math.min(cellWidth, cellHeight);
   const padding = Math.max(8, Math.floor(minSide * 0.08));
-  const minFont = 8;
-  let fontSize = Math.max(10, Math.floor(minSide * 0.2));
+  const minFont = Number.isFinite(MIN_FONT_SIZE) ? MIN_FONT_SIZE : 12;
+  const maxFont = Number.isFinite(MAX_FONT_SIZE) ? MAX_FONT_SIZE : 28;
+  let fontSize = Math.min(maxFont, Math.max(minFont, Math.floor(minSide * 0.2)));
   let attempt = 0;
-  let wrapped = null;
+  let last = null;
 
-  while (fontSize >= minFont && attempt < 20) {
+  while (fontSize >= minFont && attempt < 40) {
     const lineHeight = fontSize * 1.2;
     const maxLines = Math.max(1, Math.floor((cellHeight - padding * 2) / lineHeight));
     const maxChars = Math.max(4, Math.floor((cellWidth - padding * 2) / (fontSize * 0.6)));
-    wrapped = wrapText(text, maxChars, maxLines);
+    const wrapped = wrapText(text, maxChars, maxLines);
+    last = {
+      lines: wrapped.lines,
+      truncated: wrapped.truncated,
+      fontSize,
+      lineHeight,
+      maxLines,
+      maxChars
+    };
     if (!wrapped.truncated) {
-      return { lines: wrapped.lines, fontSize, lineHeight };
+      return last;
     }
     fontSize -= 1;
     attempt += 1;
   }
 
-  const lineHeight = fontSize * 1.2;
-  return { lines: wrapped ? wrapped.lines : [text], fontSize, lineHeight };
+  if (last) return { ...last, truncated: true };
+  return {
+    lines: [text],
+    truncated: true,
+    fontSize: minFont,
+    lineHeight: minFont * 1.2,
+    maxLines: 1,
+    maxChars: 4
+  };
 }
 
 function mirrorFacts(facts, rows, cols) {
@@ -209,7 +305,9 @@ function mirrorFacts(facts, rows, cols) {
 }
 
 function buildBackSvg(width, height, rows, cols, facts) {
-  const lines = buildGridLines(width, height, rows, cols);
+  const lines = buildPuzzlePaths(width, height, rows, cols)
+    .map((pathDef) => `<path d="${pathDef}" />`)
+    .join("");
   const cellWidth = width / cols;
   const cellHeight = height / rows;
   const mirrored = mirrorFacts(facts, rows, cols);
@@ -236,15 +334,16 @@ function buildBackSvg(width, height, rows, cols, facts) {
         .join("");
 
       textBlocks.push(
-        `<text font-size="${fontSize}" text-anchor="middle" fill="#111" font-family="Arial, sans-serif">${tspans}</text>`
+        `<text font-size="${fontSize}" text-anchor="middle" fill="#111" font-family="${FONT_FAMILY}">${tspans}</text>`
       );
     }
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+  <style>${FONT_STYLE}</style>
   <rect width="100%" height="100%" fill="#ffffff" />
-  <g fill="none" stroke="${LINE_COLOR}" stroke-opacity="${LINE_OPACITY}" stroke-width="${LINE_WIDTH}" shape-rendering="crispEdges">
+  <g fill="none" stroke="${LINE_COLOR}" stroke-opacity="${LINE_OPACITY}" stroke-width="${LINE_WIDTH}" stroke-linecap="round" stroke-linejoin="round">
     ${lines}
   </g>
   ${textBlocks.join("\n  ")}
@@ -255,7 +354,7 @@ async function generateFrontImage(ctx, session) {
   const fileLink = await ctx.telegram.getFileLink(session.photoFileId);
   const photoBuffer = await downloadFile(fileLink.href || String(fileLink));
   const { buffer, width, height } = await normalizePhoto(photoBuffer);
-  const gridSvg = buildGridSvg(width, height, session.rows, session.cols);
+  const gridSvg = buildPuzzleSvg(width, height, session.rows, session.cols);
 
   const frontBuffer = await sharp(buffer)
     .composite([{ input: Buffer.from(gridSvg), blend: "over" }])
@@ -290,7 +389,7 @@ function formatOptions() {
 }
 
 function formatFactsPrompt(session) {
-  return `Пришли факты для пазла: ${session.facts.length}/${session.count}.\nМожно писать по одному факту или сразу несколько строками.`;
+  return `Пришли факты для пазла: ${session.facts.length}/${session.count}.\nМожно писать по одному факту или сразу несколько строками. Если текст не влезет, я попрошу сократить.`;
 }
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -298,7 +397,7 @@ const bot = new Telegraf(BOT_TOKEN);
 bot.start((ctx) => {
   resetSession(ctx.from.id);
   ctx.reply(
-    "Привет! Пришли фото, и я сделаю пазл: передняя сторона с сеткой и задняя с фактами.\n\nКоманды: /start, /cancel",
+    "Привет! Пришли фото, и я сделаю пазл: передняя сторона с пазами и задняя с фактами.\n\nКоманды: /start, /cancel",
     Markup.removeKeyboard()
   );
 });
@@ -353,7 +452,7 @@ bot.action(/size:(\d+)/, async (ctx) => {
   session.step = "processing";
 
   try {
-    ctx.reply("Готовлю сетку на фото...");
+    ctx.reply("Готовлю пазл на фото...");
     const { buffer, width, height } = await generateFrontImage(ctx, session);
     session.width = width;
     session.height = height;
@@ -399,8 +498,19 @@ bot.on("text", async (ctx) => {
     return;
   }
 
+  const cellWidth = session.width / session.cols;
+  const cellHeight = session.height / session.rows;
+
   for (const line of lines) {
     if (session.facts.length >= session.count) break;
+    const targetIndex = session.facts.length + 1;
+    const fit = fitTextToCell(line, cellWidth, cellHeight);
+    if (fit.truncated) {
+      ctx.reply(
+        `Факт для детали ${targetIndex} слишком длинный и станет нечитаемым.\nСократи текст и пришли заново.`
+      );
+      return;
+    }
     session.facts.push(line);
   }
 

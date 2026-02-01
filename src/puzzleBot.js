@@ -122,20 +122,21 @@ function fmt(value) {
 function verticalEdgePath(x, y0, y1, dir, tabSpan, tabDepth, neckSpan) {
   const ym = (y0 + y1) / 2;
   const yStart = ym - tabSpan / 2;
-  const yBulbStart = yStart + neckSpan;
-  const bulbSpan = tabSpan - neckSpan * 2;
-  const halfBulb = bulbSpan / 2;
-  const depth = Math.min(tabDepth, halfBulb * 0.95);
-  const radius = (halfBulb * halfBulb + depth * depth) / (2 * depth);
-  const yBulbEnd = yBulbStart + bulbSpan;
-  const yEnd = yStart + tabSpan;
+  const yEnd = ym + tabSpan / 2;
+  const bulbRadius = Math.max(2, tabSpan / 2 - neckSpan);
+  const centerOffset = Math.max(1, tabDepth - bulbRadius);
+  const cx = x + dir * centerOffset;
+  const yBulbStart = ym - bulbRadius;
+  const yBulbEnd = ym + bulbRadius;
   const sweep = dir === 1 ? 1 : 0;
 
   return [
     `M ${fmt(x)} ${fmt(y0)}`,
     `L ${fmt(x)} ${fmt(yStart)}`,
     `L ${fmt(x)} ${fmt(yBulbStart)}`,
-    `A ${fmt(radius)} ${fmt(radius)} 0 1 ${sweep} ${fmt(x)} ${fmt(yBulbEnd)}`,
+    `L ${fmt(cx)} ${fmt(yBulbStart)}`,
+    `A ${fmt(bulbRadius)} ${fmt(bulbRadius)} 0 1 ${sweep} ${fmt(cx)} ${fmt(yBulbEnd)}`,
+    `L ${fmt(x)} ${fmt(yBulbEnd)}`,
     `L ${fmt(x)} ${fmt(yEnd)}`,
     `L ${fmt(x)} ${fmt(y1)}`
   ].join(" ");
@@ -144,20 +145,21 @@ function verticalEdgePath(x, y0, y1, dir, tabSpan, tabDepth, neckSpan) {
 function horizontalEdgePath(y, x0, x1, dir, tabSpan, tabDepth, neckSpan) {
   const xm = (x0 + x1) / 2;
   const xStart = xm - tabSpan / 2;
-  const xBulbStart = xStart + neckSpan;
-  const bulbSpan = tabSpan - neckSpan * 2;
-  const halfBulb = bulbSpan / 2;
-  const depth = Math.min(tabDepth, halfBulb * 0.95);
-  const radius = (halfBulb * halfBulb + depth * depth) / (2 * depth);
-  const xBulbEnd = xBulbStart + bulbSpan;
-  const xEnd = xStart + tabSpan;
+  const xEnd = xm + tabSpan / 2;
+  const bulbRadius = Math.max(2, tabSpan / 2 - neckSpan);
+  const centerOffset = Math.max(1, tabDepth - bulbRadius);
+  const cy = y + dir * centerOffset;
+  const xBulbStart = xm - bulbRadius;
+  const xBulbEnd = xm + bulbRadius;
   const sweep = dir === 1 ? 1 : 0;
 
   return [
     `M ${fmt(x0)} ${fmt(y)}`,
     `L ${fmt(xStart)} ${fmt(y)}`,
     `L ${fmt(xBulbStart)} ${fmt(y)}`,
-    `A ${fmt(radius)} ${fmt(radius)} 0 1 ${sweep} ${fmt(xBulbEnd)} ${fmt(y)}`,
+    `L ${fmt(xBulbStart)} ${fmt(cy)}`,
+    `A ${fmt(bulbRadius)} ${fmt(bulbRadius)} 0 1 ${sweep} ${fmt(xBulbEnd)} ${fmt(cy)}`,
+    `L ${fmt(xBulbEnd)} ${fmt(y)}`,
     `L ${fmt(xEnd)} ${fmt(y)}`,
     `L ${fmt(x1)} ${fmt(y)}`
   ].join(" ");
@@ -169,8 +171,8 @@ function buildPuzzlePaths(width, height, rows, cols) {
   const cellHeight = height / rows;
   const baseSize = Math.min(cellWidth, cellHeight);
   const tabSpan = baseSize * 0.8;
-  const tabDepth = baseSize * 0.28;
-  const neckSpan = tabSpan * 0.1;
+  const tabDepth = baseSize * 0.38;
+  const neckSpan = tabSpan * 0.12;
 
   paths.push(`M 0 0 H ${fmt(width)} V ${fmt(height)} H 0 Z`);
 

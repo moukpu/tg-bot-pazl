@@ -18,6 +18,12 @@ const LINE_COLOR = process.env.PUZZLE_LINE_COLOR || "#000000";
 const MIN_FONT_SIZE = Number.parseInt(process.env.PUZZLE_MIN_FONT_SIZE || "12", 10);
 const MAX_FONT_SIZE = Number.parseInt(process.env.PUZZLE_MAX_FONT_SIZE || "28", 10);
 const MAX_TEXT_LINES = Number.parseInt(process.env.PUZZLE_MAX_LINES || "3", 10);
+const FONT_SCALE_BY_COUNT = {
+  12: 0.9,
+  15: 0.75,
+  16: 0.7,
+  21: 0.6
+};
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,7 +80,8 @@ function createSession() {
     facts: [],
     seed: null,
     puzzlePaths: null,
-    edgeMeta: null
+    edgeMeta: null,
+    fontScale: 1
   };
 }
 
@@ -394,16 +401,19 @@ function wrapTextByWidth(text, maxWidth, fontSize) {
   return { lines, truncated: false };
 }
 
-function fitTextToCell(text, cellWidth, cellHeight, paddingOverride) {
+function fitTextToCell(text, cellWidth, cellHeight, paddingOverride, fontScale = 1) {
   const minSide = Math.min(cellWidth, cellHeight);
   const padding = Number.isFinite(paddingOverride) ? paddingOverride : Math.max(8, Math.floor(minSide * 0.08));
   const minFont = Number.isFinite(MIN_FONT_SIZE) ? MIN_FONT_SIZE : 12;
   const maxFont = Number.isFinite(MAX_FONT_SIZE) ? MAX_FONT_SIZE : 28;
-  let fontSize = Math.min(maxFont, Math.max(minFont, Math.floor(minSide * 0.2)));
+  const scale = Number.isFinite(fontScale) ? fontScale : 1;
+  const scaledMin = Math.max(8, Math.floor(minFont * scale));
+  const scaledMax = Math.max(scaledMin, Math.floor(maxFont * scale));
+  let fontSize = Math.min(scaledMax, Math.max(scaledMin, Math.floor(minSide * 0.2 * scale)));
   let attempt = 0;
   let last = null;
 
-  while (fontSize >= minFont && attempt < 40) {
+  while (fontSize >= scaledMin && attempt < 40) {
     const lineHeight = fontSize * 1.2;
     const heightLines = Math.max(1, Math.floor((cellHeight - padding * 2) / lineHeight));
     const maxLines = Math.max(1, Math.min(heightLines, MAX_TEXT_LINES));
@@ -451,6 +461,120 @@ function sanitizeFact(raw) {
     text = text.replace(/[^\w\s.,;:!?'"()\-]/g, "");
   }
   return text.replace(/\s+/g, " ").trim();
+}
+
+const STOPWORDS = new Set([
+  "и",
+  "а",
+  "но",
+  "или",
+  "что",
+  "как",
+  "когда",
+  "где",
+  "это",
+  "этот",
+  "эта",
+  "эти",
+  "тот",
+  "та",
+  "те",
+  "не",
+  "на",
+  "в",
+  "во",
+  "по",
+  "за",
+  "из",
+  "у",
+  "о",
+  "об",
+  "про",
+  "для",
+  "то",
+  "же",
+  "бы",
+  "ли",
+  "ну",
+  "да",
+  "нет",
+  "the",
+  "a",
+  "an",
+  "of",
+  "to",
+  "in",
+  "on",
+  "for",
+  "with",
+  "and",
+  "or",
+  "but",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "as",
+  "at"
+]);
+
+function splitSentences(text) {
+  return text
+    .split(/[.!?]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function autoRewriteFact(text, safeBox, fontScale) {
+  const padding = getTextPadding(safeBox);
+  const tryFit = (candidate) => {
+    const fit = fitTextToCell(candidate, safeBox.width, safeBox.height, padding, fontScale);
+    return { ok: !fit.truncated, fit };
+  };
+
+  if (tryFit(text).ok) return { text, changed: false, fit: tryFit(text).fit };
+
+  const sentences = splitSentences(text);
+  for (const sentence of sentences) {
+    if (tryFit(sentence).ok) return { text: sentence, changed: true, fit: tryFit(sentence).fit };
+  }
+
+  const words = text.split(/\s+/).filter(Boolean);
+  const filtered = words.filter((word) => {
+    const lower = word.toLowerCase();
+    return lower.length > 2 && !STOPWORDS.has(lower);
+  });
+  if (filtered.length > 0) {
+    const candidate = filtered.join(" ");
+    if (tryFit(candidate).ok) return { text: candidate, changed: true, fit: tryFit(candidate).fit };
+  }
+
+  let best = "";
+  const sourceWords = filtered.length > 0 ? filtered : words;
+  for (const word of sourceWords) {
+    const candidate = best ? `${best} ${word}` : word;
+    if (tryFit(candidate).ok) {
+      best = candidate;
+    } else {
+      break;
+    }
+  }
+  if (best && tryFit(best).ok) return { text: best, changed: true, fit: tryFit(best).fit };
+
+  let compact = "";
+  for (const char of text) {
+    const candidate = compact + char;
+    if (tryFit(candidate + "…").ok) {
+      compact = candidate;
+    } else {
+      break;
+    }
+  }
+  if (compact) return { text: `${compact}…`, changed: true, fit: tryFit(`${compact}…`).fit };
+
+  return { text, changed: false, fit: tryFit(text).fit, failed: true };
 }
 
 function getSafeBox(row, col, cellWidth, cellHeight, rows, cols, edgeMeta, basePadding) {
@@ -531,7 +655,7 @@ function mirrorFacts(facts, rows, cols) {
   return mirrored;
 }
 
-function buildBackSvg(width, height, rows, cols, facts, puzzlePaths, edgeMeta) {
+function buildBackSvg(width, height, rows, cols, facts, puzzlePaths, edgeMeta, fontScale = 1) {
   const lines = (puzzlePaths || buildPuzzleData(width, height, rows, cols).paths)
     .map((pathDef) => `<path d="${pathDef}" />`)
     .join("");
@@ -553,7 +677,8 @@ function buildBackSvg(width, height, rows, cols, facts, puzzlePaths, edgeMeta) {
         text,
         safeBox.width,
         safeBox.height,
-        textPadding
+        textPadding,
+        fontScale
       );
 
       const centerX = safeBox.centerX;
@@ -620,7 +745,8 @@ async function generateBackImage(session) {
     session.cols,
     session.facts,
     session.puzzlePaths,
-    session.edgeMeta
+    session.edgeMeta,
+    session.fontScale
   );
   const backBuffer = await sharp({
     create: {
@@ -696,6 +822,7 @@ bot.on("photo", async (ctx) => {
   session.seed = Math.floor(Math.random() * 1e9);
   session.puzzlePaths = null;
   session.edgeMeta = null;
+  session.fontScale = 1;
 
   ctx.reply("Сколько деталей в пазле?", formatOptions());
 });
@@ -720,6 +847,7 @@ bot.action(/size:(\d+)/, async (ctx) => {
   session.rows = option.rows;
   session.cols = option.cols;
   session.count = option.count;
+  session.fontScale = FONT_SCALE_BY_COUNT[option.count] || 1;
   session.step = "processing";
 
   try {
@@ -775,6 +903,7 @@ bot.on("text", async (ctx) => {
   let hadSanitized = false;
 
   let tooLong = null;
+  const autoRewrites = [];
   for (const rawLine of rawLines) {
     if (session.facts.length >= session.count) break;
     const cleaned = sanitizeFact(rawLine);
@@ -789,8 +918,16 @@ bot.on("text", async (ctx) => {
     const col = (targetIndex - 1) % session.cols;
     const safeBox = getSafeBox(row, col, cellWidth, cellHeight, session.rows, session.cols, session.edgeMeta, basePadding);
     const textPadding = getTextPadding(safeBox);
-    const fit = fitTextToCell(cleaned, safeBox.width, safeBox.height, textPadding);
+    const fit = fitTextToCell(cleaned, safeBox.width, safeBox.height, textPadding, session.fontScale);
     if (fit.truncated) {
+      const rewrite = autoRewriteFact(cleaned, safeBox, session.fontScale);
+      if (!rewrite.failed && rewrite.fit && !rewrite.fit.truncated) {
+        session.facts.push(rewrite.text);
+        if (rewrite.text !== cleaned) {
+          autoRewrites.push({ index: targetIndex, from: cleaned, to: rewrite.text });
+        }
+        continue;
+      }
       tooLong = { index: targetIndex, text: cleaned };
       break;
     }
@@ -799,6 +936,14 @@ bot.on("text", async (ctx) => {
 
   if (hadSanitized) {
     ctx.reply("Эмодзи и лишние спецсимволы удалены. Оставлены буквы, цифры и пунктуация.");
+  }
+
+  if (autoRewrites.length > 0) {
+    const lines = autoRewrites
+      .map((item) => `#${item.index}: “${item.from}” → “${item.to}”`)
+      .slice(0, 5)
+      .join("\n");
+    ctx.reply(`Слишком длинные факты я сократил автоматически:\n${lines}`);
   }
 
   if (tooLong) {

@@ -17,6 +17,7 @@ const LINE_OPACITY = Number.parseFloat(process.env.PUZZLE_LINE_OPACITY || "0.45"
 const LINE_COLOR = process.env.PUZZLE_LINE_COLOR || "#000000";
 const MIN_FONT_SIZE = Number.parseInt(process.env.PUZZLE_MIN_FONT_SIZE || "12", 10);
 const MAX_FONT_SIZE = Number.parseInt(process.env.PUZZLE_MAX_FONT_SIZE || "28", 10);
+const MAX_TEXT_LINES = Number.parseInt(process.env.PUZZLE_MAX_LINES || "3", 10);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -403,8 +404,9 @@ function fitTextToCell(text, cellWidth, cellHeight, paddingOverride) {
   let last = null;
 
   while (fontSize >= minFont && attempt < 40) {
-    const lineHeight = fontSize * 1.25;
-    const maxLines = Math.max(1, Math.floor((cellHeight - padding * 2) / lineHeight));
+    const lineHeight = fontSize * 1.2;
+    const heightLines = Math.max(1, Math.floor((cellHeight - padding * 2) / lineHeight));
+    const maxLines = Math.max(1, Math.min(heightLines, MAX_TEXT_LINES));
     const maxWidth = Math.max(10, cellWidth - padding * 2);
     const wrapped = wrapTextByWidth(text, maxWidth, fontSize);
     let lines = wrapped.lines;
@@ -646,6 +648,18 @@ function formatFactsPrompt(session) {
   return `Пришли факты для пазла: ${session.facts.length}/${session.count}.\nМожно писать по одному факту или сразу несколько строками. Эмодзи удаляются. Если текст не влезет, попрошу сократить.`;
 }
 
+async function sendProgressPreview(ctx, session, caption) {
+  try {
+    const backBuffer = await generateBackImage(session);
+    await ctx.replyWithDocument(
+      { source: backBuffer, filename: "puzzle-back-preview.png" },
+      { caption: caption || "Промежуточный результат" }
+    );
+  } catch (err) {
+    console.error("Preview generation error", err);
+  }
+}
+
 const bot = new Telegraf(BOT_TOKEN);
 
 bot.start((ctx) => {
@@ -760,6 +774,7 @@ bot.on("text", async (ctx) => {
   const basePadding = Math.max(10, Math.floor(Math.min(cellWidth, cellHeight) * 0.14));
   let hadSanitized = false;
 
+  let tooLong = null;
   for (const rawLine of rawLines) {
     if (session.facts.length >= session.count) break;
     const cleaned = sanitizeFact(rawLine);
@@ -776,10 +791,8 @@ bot.on("text", async (ctx) => {
     const textPadding = getTextPadding(safeBox);
     const fit = fitTextToCell(cleaned, safeBox.width, safeBox.height, textPadding);
     if (fit.truncated) {
-      ctx.reply(
-        `Факт для детали ${targetIndex} слишком длинный для этой детали.\nСократи текст и пришли заново.`
-      );
-      return;
+      tooLong = { index: targetIndex, text: cleaned };
+      break;
     }
     session.facts.push(cleaned);
   }
@@ -788,7 +801,17 @@ bot.on("text", async (ctx) => {
     ctx.reply("Эмодзи и лишние спецсимволы удалены. Оставлены буквы, цифры и пунктуация.");
   }
 
+  if (tooLong) {
+    await ctx.reply(
+      `Факт для детали ${tooLong.index} слишком длинный и не влез.\nВот текст: “${tooLong.text}”\nПришли новый короткий факт для этой детали.`
+    );
+    await sendProgressPreview(ctx, session, "То, что уже влезло");
+    ctx.reply(formatFactsPrompt(session));
+    return;
+  }
+
   if (session.facts.length < session.count) {
+    await sendProgressPreview(ctx, session, "То, что уже влезло");
     ctx.reply(formatFactsPrompt(session));
     return;
   }

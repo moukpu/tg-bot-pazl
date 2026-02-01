@@ -517,13 +517,7 @@ function splitSentences(text) {
     .filter(Boolean);
 }
 
-function autoRewriteFact(text, safeBox, fontScale) {
-  const padding = getTextPadding(safeBox);
-  const tryFit = (candidate) => {
-    const fit = fitTextToCell(candidate, safeBox.width, safeBox.height, padding, fontScale);
-    return { ok: !fit.truncated, fit };
-  };
-
+function autoRewriteFact(text, tryFit) {
   if (tryFit(text).ok) return { text, changed: false, fit: tryFit(text).fit };
 
   const sentences = splitSentences(text);
@@ -552,7 +546,14 @@ function autoRewriteFact(text, safeBox, fontScale) {
   return { text, changed: false, fit: tryFit(text).fit, failed: true };
 }
 
-function getSafeBox(row, col, cellWidth, cellHeight, rows, cols, edgeMeta, basePadding) {
+function influenceFactor(position, center, halfSpan) {
+  const t = Math.abs(position - center) / Math.max(1, halfSpan);
+  if (t >= 1) return 0;
+  const v = 1 - t;
+  return v * v;
+}
+
+function getSafeBox(row, col, cellWidth, cellHeight, rows, cols, edgeMeta, basePadding, centerX, centerY) {
   const leftBase = col * cellWidth;
   const topBase = row * cellHeight;
   const safePadding = Number.isFinite(basePadding)
@@ -566,25 +567,30 @@ function getSafeBox(row, col, cellWidth, cellHeight, rows, cols, edgeMeta, baseP
   let leftInset = safePadding;
   let rightInset = safePadding;
 
+  const cellCenterX = leftBase + cellWidth / 2;
+  const cellCenterY = topBase + cellHeight / 2;
+  const influenceX = influenceFactor(centerX ?? cellCenterX, cellCenterX, cellWidth / 2);
+  const influenceY = influenceFactor(centerY ?? cellCenterY, cellCenterY, cellHeight / 2);
+
   if (edgeMeta?.horizontal) {
     if (row > 0) {
       const edge = edgeMeta.horizontal[row]?.[col];
-      if (edge && edge.sign > 0) topInset += Math.min(edge.ampPx, maxInsetY);
+      if (edge && edge.sign > 0) topInset += Math.min(edge.ampPx, maxInsetY) * influenceX;
     }
     if (row < rows - 1) {
       const edge = edgeMeta.horizontal[row + 1]?.[col];
-      if (edge && edge.sign < 0) bottomInset += Math.min(edge.ampPx, maxInsetY);
+      if (edge && edge.sign < 0) bottomInset += Math.min(edge.ampPx, maxInsetY) * influenceX;
     }
   }
 
   if (edgeMeta?.vertical) {
     if (col > 0) {
       const edge = edgeMeta.vertical[col]?.[row];
-      if (edge && edge.sign > 0) leftInset += Math.min(edge.ampPx, maxInsetX);
+      if (edge && edge.sign > 0) leftInset += Math.min(edge.ampPx, maxInsetX) * influenceY;
     }
     if (col < cols - 1) {
       const edge = edgeMeta.vertical[col + 1]?.[row];
-      if (edge && edge.sign < 0) rightInset += Math.min(edge.ampPx, maxInsetX);
+      if (edge && edge.sign < 0) rightInset += Math.min(edge.ampPx, maxInsetX) * influenceY;
     }
   }
 
@@ -620,6 +626,61 @@ function getTextPadding(box) {
   return Math.max(4, Math.floor(Math.min(box.width, box.height) * 0.08));
 }
 
+function findBestPlacement(text, row, col, cellWidth, cellHeight, rows, cols, edgeMeta, basePadding, fontScale) {
+  const offsets = [0.25, 0.4, 0.5, 0.6, 0.75];
+  const leftBase = col * cellWidth;
+  const topBase = row * cellHeight;
+  let best = null;
+
+  for (const ox of offsets) {
+    for (const oy of offsets) {
+      const centerX = leftBase + cellWidth * ox;
+      const centerY = topBase + cellHeight * oy;
+      const box = getSafeBox(row, col, cellWidth, cellHeight, rows, cols, edgeMeta, basePadding, centerX, centerY);
+      const availWidth = Math.max(10, 2 * Math.min(centerX - box.left, box.right - centerX));
+      const availHeight = Math.max(10, 2 * Math.min(centerY - box.top, box.bottom - centerY));
+      if (availWidth <= 10 || availHeight <= 10) continue;
+
+      const textPadding = getTextPadding({ width: availWidth, height: availHeight });
+      const fit = fitTextToCell(text, availWidth, availHeight, textPadding, fontScale);
+      const score = fit.truncated ? fit.fontSize : fit.fontSize + 100;
+      const area = availWidth * availHeight;
+
+      if (
+        !best ||
+        (fit.truncated === best.fit.truncated && (score > best.score || (score === best.score && area > best.area))) ||
+        (!fit.truncated && best.fit.truncated)
+      ) {
+        best = {
+          centerX,
+          centerY,
+          fit,
+          score,
+          area,
+          width: availWidth,
+          height: availHeight,
+          textPadding
+        };
+      }
+    }
+  }
+
+  if (best) return best;
+  const fallbackBox = getSafeBox(row, col, cellWidth, cellHeight, rows, cols, edgeMeta, basePadding);
+  const padding = getTextPadding(fallbackBox);
+  const fit = fitTextToCell(text, fallbackBox.width, fallbackBox.height, padding, fontScale);
+  return {
+    centerX: fallbackBox.centerX,
+    centerY: fallbackBox.centerY,
+    fit,
+    score: fit.fontSize,
+    area: fallbackBox.width * fallbackBox.height,
+    width: fallbackBox.width,
+    height: fallbackBox.height,
+    textPadding: padding
+  };
+}
+
 function mirrorFacts(facts, rows, cols) {
   const mirrored = new Array(facts.length);
   for (let r = 0; r < rows; r += 1) {
@@ -648,18 +709,10 @@ function buildBackSvg(width, height, rows, cols, facts, puzzlePaths, edgeMeta, f
       const text = mirrored[index] || "";
       if (!text) continue;
 
-      const safeBox = getSafeBox(r, c, cellWidth, cellHeight, rows, cols, edgeMeta, basePadding);
-      const textPadding = getTextPadding(safeBox);
-      const { lines: wrappedLines, fontSize, lineHeight } = fitTextToCell(
-        text,
-        safeBox.width,
-        safeBox.height,
-        textPadding,
-        fontScale
-      );
-
-      const centerX = safeBox.centerX;
-      const centerY = safeBox.centerY;
+      const placement = findBestPlacement(text, r, c, cellWidth, cellHeight, rows, cols, edgeMeta, basePadding, fontScale);
+      const { lines: wrappedLines, fontSize, lineHeight } = placement.fit;
+      const centerX = placement.centerX;
+      const centerY = placement.centerY;
 
       const totalHeight = (wrappedLines.length - 1) * lineHeight;
       const startY = centerY - totalHeight / 2;
@@ -893,11 +946,24 @@ bot.on("text", async (ctx) => {
     const targetIndex = session.facts.length + 1;
     const row = Math.floor((targetIndex - 1) / session.cols);
     const col = (targetIndex - 1) % session.cols;
-    const safeBox = getSafeBox(row, col, cellWidth, cellHeight, session.rows, session.cols, session.edgeMeta, basePadding);
-    const textPadding = getTextPadding(safeBox);
-    const fit = fitTextToCell(cleaned, safeBox.width, safeBox.height, textPadding, session.fontScale);
-    if (fit.truncated) {
-      const rewrite = autoRewriteFact(cleaned, safeBox, session.fontScale);
+    const tryFit = (candidate) => {
+      const placement = findBestPlacement(
+        candidate,
+        row,
+        col,
+        cellWidth,
+        cellHeight,
+        session.rows,
+        session.cols,
+        session.edgeMeta,
+        basePadding,
+        session.fontScale
+      );
+      return { ok: !placement.fit.truncated, fit: placement.fit, placement };
+    };
+    const initial = tryFit(cleaned);
+    if (!initial.ok) {
+      const rewrite = autoRewriteFact(cleaned, tryFit);
       if (!rewrite.failed && rewrite.fit && !rewrite.fit.truncated) {
         session.facts.push(rewrite.text);
         if (rewrite.text !== cleaned) {

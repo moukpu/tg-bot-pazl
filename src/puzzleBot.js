@@ -124,10 +124,11 @@ function verticalEdgePath(x, y0, y1, dir, tabSpan, tabDepth, neckSpan) {
   const yStart = ym - tabSpan / 2;
   const yBulbStart = yStart + neckSpan;
   const bulbSpan = tabSpan - neckSpan * 2;
+  const radius = bulbSpan / 2;
   const yBulbEnd = yBulbStart + bulbSpan;
   const yEnd = yStart + tabSpan;
   const xTab = x + dir * tabDepth;
-  const control = bulbSpan * 0.25;
+  const control = radius * 0.5523;
 
   return [
     `M ${fmt(x)} ${fmt(y0)}`,
@@ -145,10 +146,11 @@ function horizontalEdgePath(y, x0, x1, dir, tabSpan, tabDepth, neckSpan) {
   const xStart = xm - tabSpan / 2;
   const xBulbStart = xStart + neckSpan;
   const bulbSpan = tabSpan - neckSpan * 2;
+  const radius = bulbSpan / 2;
   const xBulbEnd = xBulbStart + bulbSpan;
   const xEnd = xStart + tabSpan;
   const yTab = y + dir * tabDepth;
-  const control = bulbSpan * 0.25;
+  const control = radius * 0.5523;
 
   return [
     `M ${fmt(x0)} ${fmt(y)}`,
@@ -166,9 +168,9 @@ function buildPuzzlePaths(width, height, rows, cols) {
   const cellWidth = width / cols;
   const cellHeight = height / rows;
   const baseSize = Math.min(cellWidth, cellHeight);
-  const tabSpan = baseSize * 0.58;
-  const tabDepth = baseSize * 0.32;
-  const neckSpan = tabSpan * 0.18;
+  const tabSpan = baseSize * 0.7;
+  const tabDepth = baseSize * 0.42;
+  const neckSpan = tabSpan * 0.12;
 
   paths.push(`M 0 0 H ${fmt(width)} V ${fmt(height)} H 0 Z`);
 

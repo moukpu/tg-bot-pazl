@@ -906,7 +906,14 @@ function formatFactsPrompt(session) {
 
 function buildWebAppUrl(session) {
   if (!WEBAPP_URL) return "";
-  const base = WEBAPP_URL.replace(/\/+$/, "");
+  let base = WEBAPP_URL.trim();
+  if (!/^https?:\/\//i.test(base)) {
+    base = `https://${base}`;
+  }
+  if (!/^https:\/\//i.test(base)) {
+    return "";
+  }
+  base = base.replace(/\/+$/, "");
   const params = new URLSearchParams({
     pid: session.id,
     rows: String(session.rows || ""),
@@ -1005,10 +1012,15 @@ bot.action(/size:(\d+)/, async (ctx) => {
     await ctx.replyWithDocument({ source: buffer, filename: "puzzle-front.png" }, { caption: "Передняя сторона" });
     const webAppUrl = buildWebAppUrl(session);
     if (webAppUrl) {
-      await ctx.reply(
-        "Открыть редактор задней стороны можно в веб‑аппе:",
-        Markup.inlineKeyboard([Markup.button.webApp("Открыть редактор", webAppUrl)])
-      );
+      try {
+        await ctx.reply(
+          "Открыть редактор задней стороны можно в веб‑аппе:",
+          Markup.inlineKeyboard([Markup.button.webApp("Открыть редактор", webAppUrl)])
+        );
+      } catch (err) {
+        console.warn("WebApp button error", err?.message || err);
+        ctx.reply("Редактор не открыт: укажи WEBAPP_URL с https:// в .env.");
+      }
     }
     ctx.reply(formatFactsPrompt(session));
   } catch (err) {

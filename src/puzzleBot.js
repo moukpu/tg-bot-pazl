@@ -258,7 +258,7 @@ function buildPuzzleData(width, height, rows, cols, seed) {
   const rowsLines = buildDistributions(rows, cols, rng);
   const columnsLines = buildDistributions(cols, rows, rng);
 
-  const safetyFactor = 1.15;
+  const safetyFactor = 1.05;
   const horizontalEdges = rowsLines.map((lines) =>
     lines.map((line) => ({
       ampPx: line.amp * rowHeight * safetyFactor,
@@ -384,17 +384,7 @@ function wrapTextByWidth(text, maxWidth, fontSize) {
       continue;
     }
 
-    let segment = "";
-    for (const char of word) {
-      const test = segment + char;
-      if (measureTextWidth(test, fontSize) > maxWidth && segment) {
-        lines.push(segment);
-        segment = char;
-      } else {
-        segment = test;
-      }
-    }
-    current = segment;
+    return { lines: lines.concat(word), truncated: true, reason: "word_too_long" };
   }
 
   if (current) lines.push(current);
@@ -407,7 +397,7 @@ function fitTextToCell(text, cellWidth, cellHeight, paddingOverride, fontScale =
   const minFont = Number.isFinite(MIN_FONT_SIZE) ? MIN_FONT_SIZE : 12;
   const maxFont = Number.isFinite(MAX_FONT_SIZE) ? MAX_FONT_SIZE : 28;
   const scale = Number.isFinite(fontScale) ? fontScale : 1;
-  const scaledMin = Math.max(8, Math.floor(minFont * scale));
+  const scaledMin = Math.max(10, minFont);
   const scaledMax = Math.max(scaledMin, Math.floor(maxFont * scale));
   let fontSize = Math.min(scaledMax, Math.max(scaledMin, Math.floor(minSide * 0.2 * scale)));
   let attempt = 0;
@@ -541,6 +531,11 @@ function autoRewriteFact(text, safeBox, fontScale) {
     if (tryFit(sentence).ok) return { text: sentence, changed: true, fit: tryFit(sentence).fit };
   }
 
+  const clauses = text.split(/[,:;]+/).map((part) => part.trim()).filter(Boolean);
+  for (const clause of clauses) {
+    if (tryFit(clause).ok) return { text: clause, changed: true, fit: tryFit(clause).fit };
+  }
+
   const words = text.split(/\s+/).filter(Boolean);
   const filtered = words.filter((word) => {
     const lower = word.toLowerCase();
@@ -548,31 +543,11 @@ function autoRewriteFact(text, safeBox, fontScale) {
   });
   if (filtered.length > 0) {
     const candidate = filtered.join(" ");
-    if (tryFit(candidate).ok) return { text: candidate, changed: true, fit: tryFit(candidate).fit };
-  }
-
-  let best = "";
-  const sourceWords = filtered.length > 0 ? filtered : words;
-  for (const word of sourceWords) {
-    const candidate = best ? `${best} ${word}` : word;
-    if (tryFit(candidate).ok) {
-      best = candidate;
-    } else {
-      break;
+    const ratio = candidate.length / Math.max(1, text.length);
+    if (ratio >= 0.6 && tryFit(candidate).ok) {
+      return { text: candidate, changed: true, fit: tryFit(candidate).fit };
     }
   }
-  if (best && tryFit(best).ok) return { text: best, changed: true, fit: tryFit(best).fit };
-
-  let compact = "";
-  for (const char of text) {
-    const candidate = compact + char;
-    if (tryFit(candidate + "…").ok) {
-      compact = candidate;
-    } else {
-      break;
-    }
-  }
-  if (compact) return { text: `${compact}…`, changed: true, fit: tryFit(`${compact}…`).fit };
 
   return { text, changed: false, fit: tryFit(text).fit, failed: true };
 }
@@ -583,6 +558,8 @@ function getSafeBox(row, col, cellWidth, cellHeight, rows, cols, edgeMeta, baseP
   const safePadding = Number.isFinite(basePadding)
     ? basePadding
     : Math.max(10, Math.floor(Math.min(cellWidth, cellHeight) * 0.14));
+  const maxInsetX = cellWidth * 0.18;
+  const maxInsetY = cellHeight * 0.18;
 
   let topInset = safePadding;
   let bottomInset = safePadding;
@@ -592,22 +569,22 @@ function getSafeBox(row, col, cellWidth, cellHeight, rows, cols, edgeMeta, baseP
   if (edgeMeta?.horizontal) {
     if (row > 0) {
       const edge = edgeMeta.horizontal[row]?.[col];
-      if (edge && edge.sign > 0) topInset += edge.ampPx;
+      if (edge && edge.sign > 0) topInset += Math.min(edge.ampPx, maxInsetY);
     }
     if (row < rows - 1) {
       const edge = edgeMeta.horizontal[row + 1]?.[col];
-      if (edge && edge.sign < 0) bottomInset += edge.ampPx;
+      if (edge && edge.sign < 0) bottomInset += Math.min(edge.ampPx, maxInsetY);
     }
   }
 
   if (edgeMeta?.vertical) {
     if (col > 0) {
       const edge = edgeMeta.vertical[col]?.[row];
-      if (edge && edge.sign > 0) leftInset += edge.ampPx;
+      if (edge && edge.sign > 0) leftInset += Math.min(edge.ampPx, maxInsetX);
     }
     if (col < cols - 1) {
       const edge = edgeMeta.vertical[col + 1]?.[row];
-      if (edge && edge.sign < 0) rightInset += edge.ampPx;
+      if (edge && edge.sign < 0) rightInset += Math.min(edge.ampPx, maxInsetX);
     }
   }
 

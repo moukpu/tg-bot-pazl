@@ -174,10 +174,10 @@ function buildPuzzlePaths(width, height, rows, cols) {
   const cellWidth = width / cols;
   const cellHeight = height / rows;
   const baseSize = Math.min(cellWidth, cellHeight);
-  const tabSpan = baseSize * 0.85;
-  const knobRadius = baseSize * 0.33;
-  const neckWidth = knobRadius * 0.6;
-  const centerOffset = knobRadius + baseSize * 0.12;
+  const tabSpan = baseSize * 0.7;
+  const knobRadius = baseSize * 0.24;
+  const neckWidth = knobRadius * 0.5;
+  const centerOffset = knobRadius + baseSize * 0.08;
 
   paths.push(`M 0 0 H ${fmt(width)} V ${fmt(height)} H 0 Z`);
 

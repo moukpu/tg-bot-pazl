@@ -351,9 +351,9 @@ function wrapTextByWidth(text, maxWidth, fontSize) {
   return { lines, truncated: false };
 }
 
-function fitTextToCell(text, cellWidth, cellHeight) {
+function fitTextToCell(text, cellWidth, cellHeight, paddingOverride) {
   const minSide = Math.min(cellWidth, cellHeight);
-  const padding = Math.max(8, Math.floor(minSide * 0.08));
+  const padding = Number.isFinite(paddingOverride) ? paddingOverride : Math.max(8, Math.floor(minSide * 0.08));
   const minFont = Number.isFinite(MIN_FONT_SIZE) ? MIN_FONT_SIZE : 12;
   const maxFont = Number.isFinite(MAX_FONT_SIZE) ? MAX_FONT_SIZE : 28;
   let fontSize = Math.min(maxFont, Math.max(minFont, Math.floor(minSide * 0.2)));
@@ -412,6 +412,7 @@ function buildBackSvg(width, height, rows, cols, facts, puzzlePaths) {
     .join("");
   const cellWidth = width / cols;
   const cellHeight = height / rows;
+  const safePadding = Math.max(12, Math.floor(Math.min(cellWidth, cellHeight) * 0.22));
   const mirrored = mirrorFacts(facts, rows, cols);
 
   const textBlocks = [];
@@ -423,7 +424,7 @@ function buildBackSvg(width, height, rows, cols, facts, puzzlePaths) {
 
       const centerX = cellWidth * c + cellWidth / 2;
       const centerY = cellHeight * r + cellHeight / 2;
-      const { lines: wrappedLines, fontSize, lineHeight } = fitTextToCell(text, cellWidth, cellHeight);
+      const { lines: wrappedLines, fontSize, lineHeight } = fitTextToCell(text, cellWidth, cellHeight, safePadding);
 
       const totalHeight = (wrappedLines.length - 1) * lineHeight;
       const startY = centerY - totalHeight / 2;
@@ -615,11 +616,12 @@ bot.on("text", async (ctx) => {
 
   const cellWidth = session.width / session.cols;
   const cellHeight = session.height / session.rows;
+  const safePadding = Math.max(12, Math.floor(Math.min(cellWidth, cellHeight) * 0.22));
 
   for (const line of lines) {
     if (session.facts.length >= session.count) break;
     const targetIndex = session.facts.length + 1;
-    const fit = fitTextToCell(line, cellWidth, cellHeight);
+    const fit = fitTextToCell(line, cellWidth, cellHeight, safePadding);
     if (fit.truncated) {
       ctx.reply(
         `Факт для детали ${targetIndex} слишком длинный и станет нечитаемым.\nСократи текст и пришли заново.`
